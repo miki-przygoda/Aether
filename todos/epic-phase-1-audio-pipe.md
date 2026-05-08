@@ -57,10 +57,10 @@ Establish the full audio path from microphone capture on the edge node to raw PC
 - [ ] Implement `AudioStream` RPC: accept PCM chunks, route to session, return stub response
 
 ### Tests
-- [ ] Unit test: `WakeWordDetector` trait mock — correct trigger/no-trigger behaviour
-- [ ] Unit test: mDNS advertisement and discovery round-trip (loopback)
-- [ ] Integration test: mock audio source → wake word trigger → mTLS stream open → PCM delivery
-- [ ] Integration test: 3 concurrent mock edge nodes streaming simultaneously
+- [x] Unit test: `WakeWordDetector` trait mock — correct trigger/no-trigger behaviour (`aether-core/src/wake_word.rs`)
+- [x] Unit test: mDNS advertisement and discovery round-trip — `#[ignore]`; requires multicast on active NIC, run with `cargo test -- --ignored` (`brain-node/src/mdns_adv.rs`)
+- [x] Integration test: mock audio source → wake word trigger → mTLS stream open → PCM delivery (`edge-node/src/integration_tests.rs` + `brain-node/src/integration_tests.rs::mtls_audio_stream_handshake_and_pcm_delivery`)
+- [x] Integration test: 3 concurrent mock edge nodes streaming simultaneously (`brain-node/src/integration_tests.rs`)
 
 ## Done When
 PR merged to master with CI green and manual test on Pi hardware: mTLS pairing confirmed, wake word triggers stream, PCM arrives at brain.
