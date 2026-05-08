@@ -1,3 +1,4 @@
+use crate::llm::LlmClient;
 use crate::session::SessionRegistry;
 use crate::stt::{bytes_to_f32le, SpeechToText};
 use aether_core::trie::{ClassifyResult, CommandTrie};
@@ -21,6 +22,7 @@ pub struct BrainService {
     pub certs_dir: std::path::PathBuf,
     pub stt: Option<Arc<dyn SpeechToText>>,
     pub trie: Arc<CommandTrie>,
+    pub llm: Option<Arc<dyn LlmClient>>,
 }
 
 #[tonic::async_trait]
@@ -44,6 +46,7 @@ impl AetherBrain for BrainService {
         let nid = node_id.clone();
         let stt = self.stt.clone();
         let trie = self.trie.clone();
+        let llm = self.llm.clone();
 
         registry.register(node_id.clone()).await;
         registry.set_state(&node_id, NodeState::Listening).await;
@@ -80,19 +83,17 @@ impl AetherBrain for BrainService {
                             "transcript ready"
                         );
 
-                        let transcript_msg = BrainResponse {
-                            payload: Some(brain_response::Payload::Transcript(TranscriptUpdate {
-                                text: t.text.clone(),
-                                is_final: true,
-                                confidence: t.confidence,
-                            })),
-                        };
-                        if tx.send(Ok(transcript_msg)).await.is_err() {
-                            tracing::warn!(
-                                node_id = %nid2,
-                                "edge disconnected before transcript delivered"
-                            );
-                        }
+                        let _ = tx
+                            .send(Ok(BrainResponse {
+                                payload: Some(brain_response::Payload::Transcript(
+                                    TranscriptUpdate {
+                                        text: t.text.clone(),
+                                        is_final: true,
+                                        confidence: t.confidence,
+                                    },
+                                )),
+                            }))
+                            .await;
 
                         match trie.classify(&t.text) {
                             ClassifyResult::Match(action) => {
@@ -101,20 +102,63 @@ impl AetherBrain for BrainService {
                                     action = action.as_str(),
                                     "trie matched — dispatching directly"
                                 );
-                                let action_msg = BrainResponse {
-                                    payload: Some(brain_response::Payload::Action(SkillAction {
-                                        action: action.as_str().to_string(),
-                                        params_json: "{}".to_string(),
-                                    })),
-                                };
-                                let _ = tx.send(Ok(action_msg)).await;
+                                let _ = tx
+                                    .send(Ok(BrainResponse {
+                                        payload: Some(brain_response::Payload::Action(
+                                            SkillAction {
+                                                action: action.as_str().to_string(),
+                                                params_json: "{}".to_string(),
+                                            },
+                                        )),
+                                    }))
+                                    .await;
                             }
                             _ => {
-                                // TODO: route to LLM fast tier (Phase 2 PR 3)
-                                tracing::info!(
-                                    node_id = %nid2,
-                                    "no trie match — LLM path not yet implemented"
-                                );
+                                if let Some(llm) = llm {
+                                    let text = t.text;
+                                    let nid3 = nid2.clone();
+                                    match tokio::task::spawn_blocking(move || llm.ask(&text)).await
+                                    {
+                                        Ok(Ok(resp)) => {
+                                            tracing::info!(
+                                                node_id = %nid3,
+                                                action = ?resp.action,
+                                                "LLM response ready"
+                                            );
+                                            let action_str = resp
+                                                .action
+                                                .unwrap_or_else(|| "respond".to_string());
+                                            let params_json = resp
+                                                .params
+                                                .map(|p| p.to_string())
+                                                .unwrap_or_else(|| "{}".to_string());
+                                            let _ = tx
+                                                .send(Ok(BrainResponse {
+                                                    payload: Some(brain_response::Payload::Action(
+                                                        SkillAction {
+                                                            action: action_str,
+                                                            params_json,
+                                                        },
+                                                    )),
+                                                }))
+                                                .await;
+                                        }
+                                        Ok(Err(e)) => {
+                                            tracing::error!(node_id = %nid3, "LLM error: {e}")
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(
+                                                node_id = %nid3,
+                                                "LLM task panicked: {e}"
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    tracing::info!(
+                                        node_id = %nid2,
+                                        "LLM not configured — no response sent"
+                                    );
+                                }
                             }
                         }
                     }

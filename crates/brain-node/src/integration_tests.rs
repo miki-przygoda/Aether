@@ -5,8 +5,10 @@ use crate::grpc::{
     },
     BrainService,
 };
+use crate::llm::LlmClient;
 use crate::session::SessionRegistry;
 use crate::stt::{SpeechToText, TranscriptResult};
+use aether_core::LlmResponse;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
@@ -22,6 +24,7 @@ async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
         certs_dir: std::path::PathBuf::from("/tmp"),
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
+        llm: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -66,6 +69,18 @@ impl SpeechToText for MockStt {
             text: self.text.clone(),
             confidence: self.confidence,
         })
+    }
+}
+
+// ─── mock LLM ─────────────────────────────────────────────────────────────────
+
+struct MockLlm {
+    response: LlmResponse,
+}
+
+impl LlmClient for MockLlm {
+    fn ask(&self, _transcript: &str) -> anyhow::Result<LlmResponse> {
+        Ok(self.response.clone())
     }
 }
 
@@ -158,6 +173,7 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
         certs_dir: std::path::PathBuf::from("/tmp"),
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
+        llm: None,
     };
 
     let server_tls = ServerTlsConfig::new()
@@ -280,6 +296,7 @@ async fn stt_transcription_sends_transcript_update() {
         certs_dir: std::path::PathBuf::from("/tmp"),
         stt: Some(stt),
         trie: Arc::new(aether_core::CommandTrie::default()),
+        llm: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -352,6 +369,7 @@ async fn trie_match_sends_skill_action() {
         certs_dir: std::path::PathBuf::from("/tmp"),
         stt: Some(stt),
         trie: Arc::new(aether_core::CommandTrie::default()),
+        llm: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -416,5 +434,96 @@ async fn trie_match_sends_skill_action() {
             assert_eq!(a.action, "play_music");
         }
         other => panic!("expected Action, got: {other:?}"),
+    }
+}
+
+/// MockStt returns "what time is it" (trie: NoMatch) and MockLlm returns a respond action —
+/// verifies the full no-trie-match → LLM → SkillAction path without a real model or Ollama.
+#[tokio::test]
+async fn llm_invoked_on_trie_no_match_sends_skill_action() {
+    use crate::grpc::proto::brain_response;
+
+    let stt: Arc<dyn SpeechToText> = Arc::new(MockStt {
+        text: "what time is it".to_string(),
+        confidence: 0.88,
+    });
+    let llm: Arc<dyn LlmClient> = Arc::new(MockLlm {
+        response: LlmResponse {
+            action: Some("respond".to_string()),
+            params: None,
+            response: "I don't have access to a clock.".to_string(),
+        },
+    });
+
+    let registry = SessionRegistry::new();
+    let service = BrainService {
+        registry: registry.clone(),
+        certs_dir: std::path::PathBuf::from("/tmp"),
+        stt: Some(stt),
+        trie: Arc::new(aether_core::CommandTrie::default()),
+        llm: Some(llm),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(
+        Server::builder()
+            .add_service(AetherBrainServer::new(service))
+            .serve_with_incoming(TcpListenerStream::new(listener)),
+    );
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    let channel = tonic::transport::Channel::from_shared(format!("http://{addr}"))
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<AudioChunk>(8);
+    let mut client = AetherBrainClient::new(channel);
+    let stream = ReceiverStream::new(rx);
+    let mut req = tonic::Request::new(stream);
+    req.metadata_mut()
+        .insert("x-node-id", "llm-test-pi".parse().unwrap());
+
+    let resp = client.audio_stream(req).await.unwrap();
+    let mut resp_stream = resp.into_inner();
+
+    for seq in 0u64..2 {
+        tx.send(AudioChunk {
+            pcm: vec![0u8; 2048],
+            seq,
+        })
+        .await
+        .unwrap();
+    }
+    drop(tx);
+
+    // First message: TranscriptUpdate.
+    let first: BrainResponse = tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
+        .await
+        .expect("timed out waiting for TranscriptUpdate")
+        .expect("stream error")
+        .expect("stream closed before TranscriptUpdate");
+
+    match first.payload {
+        Some(brain_response::Payload::Transcript(t)) => {
+            assert_eq!(t.text, "what time is it");
+        }
+        other => panic!("expected Transcript, got: {other:?}"),
+    }
+
+    // Second message: SkillAction from LLM (trie returned NoMatch).
+    let second: BrainResponse = tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
+        .await
+        .expect("timed out waiting for SkillAction from LLM")
+        .expect("stream error")
+        .expect("stream closed before LLM SkillAction");
+
+    match second.payload {
+        Some(brain_response::Payload::Action(a)) => {
+            assert_eq!(a.action, "respond", "LLM action should be 'respond'");
+        }
+        other => panic!("expected Action from LLM, got: {other:?}"),
     }
 }

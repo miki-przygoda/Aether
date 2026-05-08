@@ -1,6 +1,7 @@
 mod grpc;
 #[cfg(test)]
 mod integration_tests;
+mod llm;
 mod mdns_adv;
 mod pair;
 mod session;
@@ -44,6 +45,18 @@ enum Command {
         /// Confidence threshold [0.0–1.0] below which the fallback model is used.
         #[arg(long, env = "WHISPER_CONFIDENCE_THRESHOLD", default_value = "0.75")]
         whisper_confidence: f32,
+
+        /// Base URL of the Ollama instance for LLM inference.
+        #[arg(
+            long,
+            env = "OLLAMA_BASE_URL",
+            default_value = "http://localhost:11434"
+        )]
+        ollama_url: String,
+
+        /// Ollama model name used for the LLM fast tier.
+        #[arg(long, env = "LLM_FAST_MODEL", default_value = "llama3.2:3b")]
+        llm_model: String,
     },
 
     /// Pairing ceremony — plain (non-TLS) gRPC on a separate port.
@@ -67,6 +80,8 @@ async fn main() -> Result<()> {
             whisper_model,
             whisper_fallback,
             whisper_confidence,
+            ollama_url,
+            llm_model,
         } => {
             serve(
                 port,
@@ -74,6 +89,8 @@ async fn main() -> Result<()> {
                 whisper_model,
                 whisper_fallback,
                 whisper_confidence,
+                ollama_url,
+                llm_model,
             )
             .await
         }
@@ -87,6 +104,8 @@ async fn serve(
     whisper_model: Option<PathBuf>,
     whisper_fallback: Option<PathBuf>,
     whisper_confidence: f32,
+    ollama_url: String,
+    llm_model: String,
 ) -> Result<()> {
     let local_ip = local_ip_address::local_ip().context("detecting local IP")?;
     tracing::info!(ip = %local_ip, "brain local address");
@@ -123,12 +142,18 @@ async fn serve(
         None
     };
 
+    tracing::info!(url = %ollama_url, model = %llm_model, "configuring Ollama LLM client");
+    let llm_engine: Option<Arc<dyn llm::LlmClient>> = Some(Arc::new(
+        llm::OllamaClient::new(ollama_url, llm_model).context("creating Ollama client")?,
+    ));
+
     let addr: SocketAddr = ([0, 0, 0, 0], port).into();
     let service = BrainService {
         registry: SessionRegistry::new(),
         certs_dir,
         stt: stt_engine,
         trie: Arc::new(aether_core::CommandTrie::default()),
+        llm: llm_engine,
     };
 
     let _mdns = match local_ip {
@@ -159,6 +184,7 @@ async fn run_pair_server(port: u16, certs_dir: PathBuf) -> Result<()> {
         certs_dir,
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
+        llm: None,
     };
 
     tracing::info!(%addr, "pairing server listening (plain gRPC)");
