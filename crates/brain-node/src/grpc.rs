@@ -1,5 +1,7 @@
 use crate::session::SessionRegistry;
+use crate::stt::{bytes_to_f32le, SpeechToText};
 use aether_core::NodeState;
+use std::sync::Arc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 
@@ -8,13 +10,15 @@ pub mod proto {
 }
 
 use proto::{
-    aether_brain_server::AetherBrain, AudioChunk, BrainResponse, PairRequest, PairResponse,
+    aether_brain_server::AetherBrain, brain_response, AudioChunk, BrainResponse, PairRequest,
+    PairResponse, TranscriptUpdate,
 };
 
 #[derive(Clone)]
 pub struct BrainService {
     pub registry: SessionRegistry,
     pub certs_dir: std::path::PathBuf,
+    pub stt: Option<Arc<dyn SpeechToText>>,
 }
 
 #[tonic::async_trait]
@@ -36,6 +40,7 @@ impl AetherBrain for BrainService {
 
         let registry = self.registry.clone();
         let nid = node_id.clone();
+        let stt = self.stt.clone();
 
         registry.register(node_id.clone()).await;
         registry.set_state(&node_id, NodeState::Listening).await;
@@ -44,7 +49,9 @@ impl AetherBrain for BrainService {
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<BrainResponse, Status>>(32);
 
         tokio::spawn(async move {
+            let mut pcm_buf: Vec<f32> = Vec::new();
             let mut expected_seq = 0u64;
+
             while let Ok(Some(chunk)) = stream.message().await {
                 if chunk.seq != expected_seq {
                     tracing::warn!(
@@ -55,8 +62,34 @@ impl AetherBrain for BrainService {
                     );
                 }
                 expected_seq = chunk.seq.wrapping_add(1);
-                // Phase 1: consume and discard — STT/LLM/TTS wired in Phase 2.
-                let _ = tx; // keep tx alive; unused responses until Phase 2
+                pcm_buf.extend(bytes_to_f32le(&chunk.pcm));
+            }
+
+            if let Some(stt) = stt {
+                registry.set_state(&nid, NodeState::Processing).await;
+                let nid2 = nid.clone();
+                match tokio::task::spawn_blocking(move || stt.transcribe(&pcm_buf)).await {
+                    Ok(Ok(t)) => {
+                        tracing::info!(
+                            node_id = %nid2,
+                            text = %t.text,
+                            confidence = t.confidence,
+                            "transcript ready"
+                        );
+                        let msg = BrainResponse {
+                            payload: Some(brain_response::Payload::Transcript(TranscriptUpdate {
+                                text: t.text,
+                                is_final: true,
+                                confidence: t.confidence,
+                            })),
+                        };
+                        if tx.send(Ok(msg)).await.is_err() {
+                            tracing::warn!(node_id = %nid2, "edge disconnected before transcript delivered");
+                        }
+                    }
+                    Ok(Err(e)) => tracing::error!(node_id = %nid, "STT error: {e}"),
+                    Err(e) => tracing::error!(node_id = %nid, "STT task panicked: {e}"),
+                }
             }
 
             registry.set_state(&nid, NodeState::Idle).await;
@@ -71,7 +104,6 @@ impl AetherBrain for BrainService {
         let node_id = request.into_inner().node_id;
         tracing::info!(node_id = %node_id, "pairing request received");
 
-        // Prompt operator to approve.
         println!("\n>>> Pairing request from node: \"{node_id}\" <<<");
         println!("Press ENTER to approve, Ctrl-C to deny...");
         let mut buf = String::new();
