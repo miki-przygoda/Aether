@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "edge-node",
+    "brain-node",
+    "shared",
+]
+resolver = "2"
