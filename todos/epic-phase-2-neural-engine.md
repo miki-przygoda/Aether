@@ -4,15 +4,6 @@
 
 **IN PROGRESS** — branch `epic-phase-2-neural-engine`
 
-| PR | Scope | State |
-|----|-------|-------|
-| PR 1 | STT (`whisper-rs`, confidence fallback, gRPC wiring) | merged to branch |
-| PR 2 | CommandTrie (`aether-core`, trie dispatch in gRPC handler) | merged to branch |
-| PR 3 | LLM fast tier (Ollama / Llama 3.2 3B) | next |
-| PR 4 | Skill Router | pending |
-| PR 5 | TTS (Kokoro ONNX) + edge-node WAV playback | pending |
-| PR 6 | Docker Compose + auto model download | pending |
-
 **Decision (2026-05-09):** Deep tier (DeepSeek-R1-Distill 8B) is **skipped**. Fast tier (Llama 3.2 3B) only. Docker will auto-download all models on first start.
 
 ---
@@ -63,7 +54,7 @@ Deploy the brain as a Docker Compose stack and wire the incoming PCM stream thro
 - [x] Seed initial command set: play/pause/stop music, set timer, lights on/off, weather, volume up/down (13 phrases)
 - [x] `classify()` supports partial-match detection for streaming evaluation — awaits streaming STT token callbacks
 - [x] On Trie match: send `SkillAction` to edge node directly, LLM call skipped
-- [x] On no match after full transcript: stub logs "LLM path not yet implemented" (wired in PR 3)
+- [x] On no match after full transcript: stub logs "LLM path not yet implemented"
 - [x] Unit tests: 16 tests covering exact match, embedded match, case insensitivity, partial prefix, punctuation, NoMatch
 
 ### LLM
@@ -86,8 +77,8 @@ Deploy the brain as a Docker Compose stack and wire the incoming PCM stream thro
 
 ### Tests
 - [x] Unit tests: `bytes_to_f32le` roundtrip + `#[ignore]` real-model smoke test
-- [x] Integration test: MockStt → `TranscriptUpdate` delivered to edge (PR 1)
-- [x] Integration test: trie match → `SkillAction{action:"play_music"}` delivered to edge (PR 2)
+- [x] Integration test: MockStt → `TranscriptUpdate` delivered to edge
+- [x] Integration test: trie match → `SkillAction{action:"play_music"}` delivered to edge
 - [x] Unit tests: 16 trie classify tests (match / partial / no-match / punctuation / case)
 - [ ] Unit test: LLM JSON schema validation (fast-tier output always valid `LlmResponse`)
 - [ ] Unit test: skill router dispatch — correct skill selected for each action string
