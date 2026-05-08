@@ -1,0 +1,24 @@
+services:
+  brain-node:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "50051:50051"  # mTLS gRPC — edge nodes connect here after pairing
+      - "50052:50052"  # Pairing port — plain gRPC, wired connection only
+    volumes:
+      - aether-certs:/data/certs
+    environment:
+      BRAIN_GRPC_PORT: "50051"
+      BRAIN_PAIR_PORT: "50052"
+      BRAIN_CERTS_DIR: /data/certs
+
+volumes:
+  aether-certs:
+    # Named volume — persists the local CA, brain server cert, and all issued
+    # edge-node client certs across container restarts and image rebuilds.
+    #
+    # First boot: brain-node generates the CA and server cert automatically.
+    # Subsequent boots: existing certs are reused (ensure_certs is idempotent).
+    #
+    # WARNING: removing this volume invalidates all paired edge node certs.
+    # Every Pi will need to be re-paired if the volume is deleted.

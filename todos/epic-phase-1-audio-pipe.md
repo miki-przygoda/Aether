@@ -41,13 +41,17 @@ Establish the full audio path from microphone capture on the edge node to raw PC
 - [ ] Add `mdns-sd` to `edge-node`; discover `_aether._tcp.local` on boot, retry until found
 - [ ] Load client cert from local storage (provisioned during pairing)
 - [ ] Open mTLS gRPC stream with `node_id` in metadata on wake word trigger
+- [ ] Cross-compile `edge-node` for Pi (`aarch64-unknown-linux-gnu` / `armv7-unknown-linux-gnueabihf`) via `cross-rs`
+  - `Cross.toml` at workspace root; custom image installs `libasound2-dev` + `protobuf-compiler` for the target arch
+  - CI job verifies the cross-compile succeeds on every PR
+  - `scripts/deploy-edge.sh` copies the binary to the Pi via `AETHER_PI_HOST` env var (no hardcoded addresses)
 
 ### Brain Node
 - [ ] Add `mdns-sd` to `brain-node`; advertise `_aether._tcp.local` (post-pairing discovery fallback)
 - [ ] Add `rcgen` + `rustls`; implement wired pairing ceremony (`aether-brain pair` CLI subcommand)
   - Brain listens on wired interface during pairing; stores brain address in Pi config on completion
   - After pairing, Pi uses stored address first; falls back to mDNS if unreachable
-- [ ] Store CA + issued certs in Docker named volume (persist across restarts)
+- [x] Store CA + issued certs in Docker named volume (persist across restarts) — `compose.yml` + `aether-certs` named volume
 - [ ] Define `aether.proto` gRPC service with `node_id` in stream metadata
 - [ ] Implement session registry: `HashMap<NodeId, Session>` with async-safe access
 - [ ] Implement `AudioStream` RPC: accept PCM chunks, route to session, return stub response

@@ -1,0 +1,6 @@
+target/
+.git/
+private/
+todos/
+*.md
+!proto/
