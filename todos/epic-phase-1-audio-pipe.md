@@ -4,9 +4,10 @@
 Establish the full audio path from microphone capture on the edge node to raw PCM delivery at the brain node. Wake word detection uses rustpotter (pure Rust, no external account). All communication is secured via mTLS with a self-hosted CA. Multi-node support is built in from the start — not retrofitted.
 
 ## Stack
-- **Wake Word:** `rustpotter` — pure Rust, trainable on user voice
+- **Wake Word:** `rustpotter` — pure Rust, trainable on user voice; baseline model shipped with repo
 - **Audio I/O:** `cpal` (ALSA on Pi)
-- **Discovery:** `mdns-sd` — brain advertises `_aether._tcp.local`
+- **Initial Pairing:** wired (USB Ethernet / direct cable) — avoids mDNS-in-Docker on first setup
+- **Discovery (ongoing):** `mdns-sd` + stored brain address — mDNS as fallback after first pairing
 - **TLS:** `rcgen` (cert generation) + `rustls` (TLS runtime)
 - **Transport:** `tonic` gRPC over mTLS, bidirectional streaming
 
@@ -14,7 +15,8 @@ Establish the full audio path from microphone capture on the edge node to raw PC
 - [ ] `cpal` captures 16kHz mono PCM on the edge node without dropped frames
 - [ ] rustpotter detects "Hey Aether" using the shipped baseline model with acceptable false-positive rate
 - [ ] Wake word layer is abstracted behind a `WakeWordDetector` trait — backend is swappable
-- [ ] Edge node discovers the brain automatically via mDNS on boot — no IP config required
+- [ ] Initial pairing works over a wired connection (USB Ethernet / direct cable) — no WiFi or mDNS required
+- [ ] After pairing, brain's address is stored on the Pi; mDNS used as fallback if address changes
 - [ ] Pairing ceremony generates a local CA on the brain, issues a unique client cert to each Pi
 - [ ] Paired certs survive brain Docker restarts (stored in a named volume)
 - [ ] On wake word: a mTLS gRPC bidirectional stream opens to the brain within 200ms
@@ -27,7 +29,8 @@ Establish the full audio path from microphone capture on the edge node to raw PC
 ## Tasks
 
 ### Baseline Wake Word Model
-- [ ] Record a diverse set of "Hey Aether" samples (varied speakers, environments)
+- [ ] Generate synthetic "Hey Aether" samples via Kokoro TTS across all available voices
+- [ ] Supplement with real samples from developer + family/friends (varied accents, environments)
 - [ ] Train baseline rustpotter model and commit to `models/wake-word/hey-aether-baseline.rpw`
 - [ ] Document the training process so users can retrain with their own voice
 
@@ -40,8 +43,10 @@ Establish the full audio path from microphone capture on the edge node to raw PC
 - [ ] Open mTLS gRPC stream with `node_id` in metadata on wake word trigger
 
 ### Brain Node
-- [ ] Add `mdns-sd` to `brain-node`; advertise `_aether._tcp.local`
-- [ ] Add `rcgen` + `rustls`; implement pairing ceremony (`aether-brain pair` CLI subcommand)
+- [ ] Add `mdns-sd` to `brain-node`; advertise `_aether._tcp.local` (post-pairing discovery fallback)
+- [ ] Add `rcgen` + `rustls`; implement wired pairing ceremony (`aether-brain pair` CLI subcommand)
+  - Brain listens on wired interface during pairing; stores brain address in Pi config on completion
+  - After pairing, Pi uses stored address first; falls back to mDNS if unreachable
 - [ ] Store CA + issued certs in Docker named volume (persist across restarts)
 - [ ] Define `aether.proto` gRPC service with `node_id` in stream metadata
 - [ ] Implement session registry: `HashMap<NodeId, Session>` with async-safe access
