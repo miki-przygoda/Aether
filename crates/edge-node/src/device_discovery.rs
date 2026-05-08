@@ -468,10 +468,10 @@ mod tests {
         // We verify this by checking no warning mentions "no ALSA cards" when an
         // override is present — the pure logic branch is covered regardless of host.
         let report = discover(&config);
-        let has_no_card_warn = report
-            .warnings
-            .iter()
-            .any(|w| w.contains("no ALSA cards"));
-        assert!(!has_no_card_warn, "override should suppress the no-cards warning");
+        let has_no_card_warn = report.warnings.iter().any(|w| w.contains("no ALSA cards"));
+        assert!(
+            !has_no_card_warn,
+            "override should suppress the no-cards warning"
+        );
     }
 }

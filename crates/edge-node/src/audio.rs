@@ -89,7 +89,6 @@ mod tests {
         assert_eq!(cvt(0.5_f32), 0.5);
         assert_eq!(cvt(-1.0_f32), -1.0);
     }
-
 }
 
 fn build_stream<T>(

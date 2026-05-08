@@ -143,7 +143,10 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
     };
 
     let server_tls = ServerTlsConfig::new()
-        .identity(Identity::from_pem(&server_cert.cert_pem, &server_cert.key_pem))
+        .identity(Identity::from_pem(
+            &server_cert.cert_pem,
+            &server_cert.key_pem,
+        ))
         .client_ca_root(Certificate::from_pem(&ca.cert_pem));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -161,7 +164,10 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
 
     let tls = ClientTlsConfig::new()
         .ca_certificate(Certificate::from_pem(&ca.cert_pem))
-        .identity(Identity::from_pem(&client_cert.cert_pem, &client_cert.key_pem));
+        .identity(Identity::from_pem(
+            &client_cert.cert_pem,
+            &client_cert.key_pem,
+        ));
 
     let channel = Channel::from_shared(format!("https://{addr}"))
         .unwrap()
@@ -189,7 +195,12 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
     wait_for_count(&registry, 1, 2_000).await;
 
     for seq in 0u64..3 {
-        tx.send(AudioChunk { pcm: vec![0u8; 512], seq }).await.unwrap();
+        tx.send(AudioChunk {
+            pcm: vec![0u8; 512],
+            seq,
+        })
+        .await
+        .unwrap();
     }
     drop(tx);
 

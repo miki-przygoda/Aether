@@ -53,10 +53,7 @@ impl AetherBrain for MockBrain {
         Ok(Response::new(ReceiverStream::new(resp_rx)))
     }
 
-    async fn pair(
-        &self,
-        _: Request<PairRequest>,
-    ) -> Result<Response<PairResponse>, Status> {
+    async fn pair(&self, _: Request<PairRequest>) -> Result<Response<PairResponse>, Status> {
         Err(Status::unimplemented("not used in this test"))
     }
 }
@@ -109,13 +106,10 @@ async fn wake_word_trigger_opens_stream_and_delivers_pcm() {
     }
     drop(pcm_tx);
 
-    let received = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        count_rx.recv(),
-    )
-    .await
-    .expect("timed out — mock brain did not report chunk count within 2 s")
-    .expect("count channel closed unexpectedly");
+    let received = tokio::time::timeout(std::time::Duration::from_secs(2), count_rx.recv())
+        .await
+        .expect("timed out — mock brain did not report chunk count within 2 s")
+        .expect("count channel closed unexpectedly");
 
     assert_eq!(received, 3, "brain should receive all 3 PCM chunks");
 }
