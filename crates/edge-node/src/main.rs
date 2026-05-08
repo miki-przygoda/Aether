@@ -2,6 +2,8 @@ mod audio;
 mod brain_conn;
 mod device_discovery;
 mod wake_word;
+#[cfg(test)]
+mod integration_tests;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
