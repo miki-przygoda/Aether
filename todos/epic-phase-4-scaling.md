@@ -1,22 +1,24 @@
 # Epic: Phase 4 — Memory & Scaling
 
 ## Goal
-Add persistent memory via a local vector DB and support multi-room satellite nodes.
+Add persistent memory via a local vector DB (Qdrant) in the Docker Compose stack and support retrieval-augmented generation (RAG) so the assistant can answer questions grounded in local documents.
 
 ## Acceptance Criteria
-- [ ] Qdrant running on the brain node indexes at least one local document corpus
-- [ ] LLM can answer questions grounded in indexed documents (retrieval-augmented generation)
-- [ ] A second edge node can be added to the Tailscale mesh and handled concurrently
-- [ ] Conversation context persists across sessions (stored in Qdrant)
+- [ ] Qdrant service added to `docker-compose.yml`; starts automatically with the brain stack
+- [ ] Brain node indexes at least one local document corpus into Qdrant on demand
+- [ ] LLM can answer questions grounded in indexed documents (RAG-augmented prompt)
+- [ ] Conversation context persists across sessions (stored in and retrieved from Qdrant)
+- [ ] Brain handles N concurrent edge node sessions with independent conversation histories
 - [ ] All code passes CI
 
 ## Tasks
-- [ ] Deploy Qdrant on brain node; add `qdrant-client` crate
-- [ ] Build document ingestion pipeline: chunking, embedding (via local model), upsert
-- [ ] Modify LLM prompt to include retrieved context snippets
-- [ ] Refactor brain node to handle multiple concurrent gRPC streams (one per edge node)
-- [ ] Add per-session conversation history stored and retrieved from Qdrant
-- [ ] Integration test: two simultaneous mock streams processed correctly
+- [ ] Add `qdrant` service to `docker-compose.yml` with a named data volume
+- [ ] Add `qdrant-client` crate to `brain-node`
+- [ ] Build document ingestion pipeline: file chunking, embedding (local model), upsert to Qdrant
+- [ ] Modify Ollama prompt builder to inject retrieved context chunks above the user query
+- [ ] Implement per-session conversation history: store turns in Qdrant, retrieve last N on each request
+- [ ] Refactor session registry to support full concurrent histories per `node_id`
+- [ ] Integration test: two simultaneous mock streams with independent conversation contexts
 
 ## Done When
-PR merged to master with CI green and RAG-grounded query plus multi-node concurrency verified on hardware.
+PR merged to master with CI green and a RAG-grounded query (document Q&A) plus persistent context verified end-to-end.
