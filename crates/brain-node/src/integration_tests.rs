@@ -1,12 +1,18 @@
 use crate::grpc::{
     proto::{
         aether_brain_client::AetherBrainClient, aether_brain_server::AetherBrainServer, AudioChunk,
+        BrainResponse,
     },
     BrainService,
 };
 use crate::session::SessionRegistry;
+use crate::stt::{SpeechToText, TranscriptResult};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity, Server, ServerTlsConfig};
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
 
 /// Spin up a plain (no-TLS) BrainService on a random localhost port.
 async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
@@ -14,6 +20,7 @@ async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
     let service = BrainService {
         registry: registry.clone(),
         certs_dir: std::path::PathBuf::from("/tmp"),
+        stt: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -30,7 +37,6 @@ async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
 }
 
 /// Poll until the registry reaches the expected count or the timeout elapses.
-/// Each 10 ms sleep gives the tokio scheduler a chance to run cleanup tasks.
 async fn wait_for_count(registry: &SessionRegistry, expected: usize, timeout_ms: u64) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
     loop {
@@ -46,11 +52,28 @@ async fn wait_for_count(registry: &SessionRegistry, expected: usize, timeout_ms:
     }
 }
 
+// ─── mock STT ─────────────────────────────────────────────────────────────────
+
+struct MockStt {
+    text: String,
+    confidence: f32,
+}
+
+impl SpeechToText for MockStt {
+    fn transcribe(&self, _pcm: &[f32]) -> anyhow::Result<TranscriptResult> {
+        Ok(TranscriptResult {
+            text: self.text.clone(),
+            confidence: self.confidence,
+        })
+    }
+}
+
+// ─── tests ────────────────────────────────────────────────────────────────────
+
 #[tokio::test]
 async fn three_concurrent_audio_streams_register_and_cleanup() {
     let (addr, registry) = start_plain_server().await;
 
-    // Senders keep the request half-streams open; dropping them triggers cleanup.
     let mut senders = Vec::new();
 
     for i in 0..3 {
@@ -72,13 +95,11 @@ async fn three_concurrent_audio_streams_register_and_cleanup() {
                 .insert("x-node-id", node_id.parse().unwrap());
             if let Ok(resp) = client.audio_stream(req).await {
                 let mut rs = resp.into_inner();
-                // Drive the response stream to completion.
                 while let Ok(Some(_)) = rs.message().await {}
             }
         });
     }
 
-    // Phase 1 acceptance criterion: 3 distinct nodes, 3 distinct sessions.
     wait_for_count(&registry, 3, 2_000).await;
     assert_eq!(
         registry.count().await,
@@ -86,8 +107,6 @@ async fn three_concurrent_audio_streams_register_and_cleanup() {
         "all three sessions should be active"
     );
 
-    // Dropping request senders ends the request half-streams.
-    // The server tasks then exit their while loops and call unregister().
     drop(senders);
 
     wait_for_count(&registry, 0, 2_000).await;
@@ -112,11 +131,9 @@ async fn audio_stream_requires_node_id_metadata() {
 
     let (tx, rx) = tokio::sync::mpsc::channel::<AudioChunk>(1);
     let stream = ReceiverStream::new(rx);
-    // Immediately close the stream so the RPC doesn't hang.
     drop(tx);
 
     let req = tonic::Request::new(stream);
-    // No x-node-id header — server should reject with Unauthenticated.
     let err = client.audio_stream(req).await.unwrap_err();
     assert_eq!(
         err.code(),
@@ -126,8 +143,6 @@ async fn audio_stream_requires_node_id_metadata() {
 }
 
 /// Full mTLS handshake: real CA → server cert (IP SAN 127.0.0.1) → client cert.
-/// Verifies the cert chain produced by `pair` is accepted end-to-end by tonic/rustls
-/// and that PCM chunks delivered over the authenticated stream are registered and cleaned up.
 #[tokio::test]
 async fn mtls_audio_stream_handshake_and_pcm_delivery() {
     let ca = crate::pair::generate_ca().unwrap();
@@ -140,6 +155,7 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
     let service = BrainService {
         registry: registry.clone(),
         certs_dir: std::path::PathBuf::from("/tmp"),
+        stt: None,
     };
 
     let server_tls = ServerTlsConfig::new()
@@ -232,10 +248,8 @@ async fn audio_chunk_seq_is_accepted_in_order() {
         }
     });
 
-    // Wait for the session to appear before sending chunks.
     wait_for_count(&registry, 1, 1_000).await;
 
-    // Send a few contiguous-sequence chunks — server should not log out-of-order warnings.
     for seq in 0u64..5 {
         tx.send(AudioChunk {
             pcm: vec![0u8; 32],
@@ -245,7 +259,75 @@ async fn audio_chunk_seq_is_accepted_in_order() {
         .unwrap();
     }
 
-    // Close the stream and wait for cleanup.
     drop(tx);
     wait_for_count(&registry, 0, 2_000).await;
+}
+
+/// MockStt returns a fixed transcript — verifies the full PCM-in → TranscriptUpdate-out path
+/// without requiring a real Whisper model.
+#[tokio::test]
+async fn stt_transcription_sends_transcript_update() {
+    let stt: Arc<dyn SpeechToText> = Arc::new(MockStt {
+        text: "hello world".to_string(),
+        confidence: 0.92,
+    });
+
+    let registry = SessionRegistry::new();
+    let service = BrainService {
+        registry: registry.clone(),
+        certs_dir: std::path::PathBuf::from("/tmp"),
+        stt: Some(stt),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(
+        Server::builder()
+            .add_service(AetherBrainServer::new(service))
+            .serve_with_incoming(TcpListenerStream::new(listener)),
+    );
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    let channel = tonic::transport::Channel::from_shared(format!("http://{addr}"))
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<AudioChunk>(8);
+    let mut client = AetherBrainClient::new(channel);
+    let stream = ReceiverStream::new(rx);
+    let mut req = tonic::Request::new(stream);
+    req.metadata_mut()
+        .insert("x-node-id", "stt-test-pi".parse().unwrap());
+
+    let resp = client.audio_stream(req).await.unwrap();
+    let mut resp_stream = resp.into_inner();
+
+    // Send 3 fake PCM chunks then close the stream.
+    for seq in 0u64..3 {
+        tx.send(AudioChunk {
+            pcm: vec![0u8; 2048],
+            seq,
+        })
+        .await
+        .unwrap();
+    }
+    drop(tx);
+
+    let msg: BrainResponse = tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
+        .await
+        .expect("timed out waiting for TranscriptUpdate")
+        .expect("stream error")
+        .expect("stream closed without message");
+
+    use crate::grpc::proto::brain_response;
+    match msg.payload {
+        Some(brain_response::Payload::Transcript(t)) => {
+            assert_eq!(t.text, "hello world");
+            assert!(t.is_final);
+            assert!((t.confidence - 0.92).abs() < 1e-5, "confidence mismatch");
+        }
+        other => panic!("expected Transcript payload, got: {other:?}"),
+    }
 }
