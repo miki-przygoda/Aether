@@ -43,6 +43,20 @@ Aether is a local-first, privacy-centric smart speaker built in Rust. It runs al
 - **GPIO:** `rppal`
 - **Cross-compile:** `cross-rs`
 
+## Workspace Layout
+
+```
+Aether/
+├── crates/
+│   ├── aether-core/   — shared types and traits (LlmResponse, NodeState, etc.)
+│   ├── brain-node/    — Docker-deployed inference server (STT, LLM, TTS)
+│   └── edge-node/     — ARM SBC binary (wake word, audio capture, gRPC client)
+├── todos/             — phase epics and task tracking
+└── Cargo.toml         — workspace root (version and edition inherited by all crates)
+```
+
+All crates inherit `version` and `edition` from `[workspace.package]` in the root `Cargo.toml`.
+
 ## Coding Standards
 
 - Rust edition 2021
