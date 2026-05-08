@@ -44,6 +44,11 @@ impl SessionRegistry {
             s.state = state;
         }
     }
+
+    #[cfg(test)]
+    pub async fn count(&self) -> usize {
+        self.inner.read().await.len()
+    }
 }
 
 #[cfg(test)]
