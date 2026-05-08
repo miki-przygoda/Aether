@@ -4,6 +4,7 @@ mod integration_tests;
 mod mdns_adv;
 mod pair;
 mod session;
+mod stt;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -11,6 +12,7 @@ use grpc::{proto::aether_brain_server::AetherBrainServer, BrainService};
 use session::SessionRegistry;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 
 #[derive(Parser)]
@@ -29,6 +31,19 @@ enum Command {
 
         #[arg(long, env = "BRAIN_CERTS_DIR", default_value = "/data/certs")]
         certs_dir: PathBuf,
+
+        /// Path to the Whisper GGUF model file (e.g. ggml-medium.bin).
+        /// STT is disabled and transcripts will not be produced if not set.
+        #[arg(long, env = "WHISPER_MODEL_PATH")]
+        whisper_model: Option<PathBuf>,
+
+        /// Path to a larger Whisper model used when confidence falls below threshold.
+        #[arg(long, env = "WHISPER_FALLBACK_MODEL_PATH")]
+        whisper_fallback: Option<PathBuf>,
+
+        /// Confidence threshold [0.0–1.0] below which the fallback model is used.
+        #[arg(long, env = "WHISPER_CONFIDENCE_THRESHOLD", default_value = "0.75")]
+        whisper_confidence: f32,
     },
 
     /// Pairing ceremony — plain (non-TLS) gRPC on a separate port.
@@ -46,12 +61,33 @@ enum Command {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     match Cli::parse().command {
-        Command::Serve { port, certs_dir } => serve(port, certs_dir).await,
+        Command::Serve {
+            port,
+            certs_dir,
+            whisper_model,
+            whisper_fallback,
+            whisper_confidence,
+        } => {
+            serve(
+                port,
+                certs_dir,
+                whisper_model,
+                whisper_fallback,
+                whisper_confidence,
+            )
+            .await
+        }
         Command::Pair { port, certs_dir } => run_pair_server(port, certs_dir).await,
     }
 }
 
-async fn serve(port: u16, certs_dir: PathBuf) -> Result<()> {
+async fn serve(
+    port: u16,
+    certs_dir: PathBuf,
+    whisper_model: Option<PathBuf>,
+    whisper_fallback: Option<PathBuf>,
+    whisper_confidence: f32,
+) -> Result<()> {
     let local_ip = local_ip_address::local_ip().context("detecting local IP")?;
     tracing::info!(ip = %local_ip, "brain local address");
 
@@ -67,10 +103,31 @@ async fn serve(port: u16, certs_dir: PathBuf) -> Result<()> {
         .identity(identity)
         .client_ca_root(client_ca);
 
+    let stt_engine: Option<Arc<dyn stt::SpeechToText>> = if let Some(model_path) = whisper_model {
+        let model_str = model_path
+            .to_str()
+            .context("WHISPER_MODEL_PATH is not valid UTF-8")?;
+        let fallback_str = whisper_fallback
+            .as_deref()
+            .map(|p| {
+                p.to_str()
+                    .context("WHISPER_FALLBACK_MODEL_PATH is not valid UTF-8")
+            })
+            .transpose()?;
+        tracing::info!(model = %model_str, "loading Whisper STT model");
+        let w = stt::WhisperStt::new(model_str, fallback_str, whisper_confidence)
+            .context("loading Whisper STT model")?;
+        Some(Arc::new(w))
+    } else {
+        tracing::warn!("--whisper-model not set — STT disabled (no transcripts will be produced)");
+        None
+    };
+
     let addr: SocketAddr = ([0, 0, 0, 0], port).into();
     let service = BrainService {
         registry: SessionRegistry::new(),
         certs_dir,
+        stt: stt_engine,
     };
 
     let _mdns = match local_ip {
@@ -99,6 +156,7 @@ async fn run_pair_server(port: u16, certs_dir: PathBuf) -> Result<()> {
     let service = BrainService {
         registry: SessionRegistry::new(),
         certs_dir,
+        stt: None,
     };
 
     tracing::info!(%addr, "pairing server listening (plain gRPC)");
