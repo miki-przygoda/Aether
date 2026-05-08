@@ -45,7 +45,7 @@ Deploy the brain as a Docker Compose stack and wire the incoming PCM stream thro
 - [ ] Expose confidence threshold as env var (`WHISPER_CONFIDENCE_THRESHOLD`)
 
 ### Command Classifier (Trie)
-- [ ] Define `CommandTrie` in `shared` crate: prefix tree over tokenised command phrases
+- [ ] Define `CommandTrie` in `aether-core` crate: prefix tree over tokenised command phrases
 - [ ] Seed initial command set: play/pause music, set timer, lights on/off, weather, volume up/down
 - [ ] Wire classifier to Whisper streaming output — evaluate partial transcript on each new token
 - [ ] On Trie match: emit `TrieAction` directly to skill router, cancel pending LLM call if any
