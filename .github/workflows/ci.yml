@@ -27,6 +27,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libasound2-dev
       - name: Cache
         uses: actions/cache@v4
         with:
@@ -45,6 +47,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libasound2-dev
       - name: Cache
         uses: actions/cache@v4
         with:
