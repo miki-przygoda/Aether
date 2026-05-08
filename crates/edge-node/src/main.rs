@@ -1,5 +1,6 @@
 mod audio;
 mod brain_conn;
+mod device_discovery;
 mod wake_word;
 
 use anyhow::{Context, Result};
