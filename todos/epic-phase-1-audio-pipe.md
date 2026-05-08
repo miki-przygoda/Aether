@@ -41,22 +41,26 @@ Establish the full audio path from microphone capture on the edge node to raw PC
 - [ ] Add `mdns-sd` to `edge-node`; discover `_aether._tcp.local` on boot, retry until found
 - [ ] Load client cert from local storage (provisioned during pairing)
 - [ ] Open mTLS gRPC stream with `node_id` in metadata on wake word trigger
+- [ ] Cross-compile `edge-node` for Pi (`aarch64-unknown-linux-gnu` / `armv7-unknown-linux-gnueabihf`) via `cross-rs`
+  - `Cross.toml` at workspace root; custom image installs `libasound2-dev` + `protobuf-compiler` for the target arch
+  - CI job verifies the cross-compile succeeds on every PR
+  - `scripts/deploy-edge.sh` copies the binary to the Pi via `AETHER_PI_HOST` env var (no hardcoded addresses)
 
 ### Brain Node
 - [ ] Add `mdns-sd` to `brain-node`; advertise `_aether._tcp.local` (post-pairing discovery fallback)
 - [ ] Add `rcgen` + `rustls`; implement wired pairing ceremony (`aether-brain pair` CLI subcommand)
   - Brain listens on wired interface during pairing; stores brain address in Pi config on completion
   - After pairing, Pi uses stored address first; falls back to mDNS if unreachable
-- [ ] Store CA + issued certs in Docker named volume (persist across restarts)
+- [x] Store CA + issued certs in Docker named volume (persist across restarts) — `compose.yml` + `aether-certs` named volume
 - [ ] Define `aether.proto` gRPC service with `node_id` in stream metadata
 - [ ] Implement session registry: `HashMap<NodeId, Session>` with async-safe access
 - [ ] Implement `AudioStream` RPC: accept PCM chunks, route to session, return stub response
 
 ### Tests
-- [ ] Unit test: `WakeWordDetector` trait mock — correct trigger/no-trigger behaviour
-- [ ] Unit test: mDNS advertisement and discovery round-trip (loopback)
-- [ ] Integration test: mock audio source → wake word trigger → mTLS stream open → PCM delivery
-- [ ] Integration test: 3 concurrent mock edge nodes streaming simultaneously
+- [x] Unit test: `WakeWordDetector` trait mock — correct trigger/no-trigger behaviour (`aether-core/src/wake_word.rs`)
+- [x] Unit test: mDNS advertisement and discovery round-trip — `#[ignore]`; requires multicast on active NIC, run with `cargo test -- --ignored` (`brain-node/src/mdns_adv.rs`)
+- [x] Integration test: mock audio source → wake word trigger → mTLS stream open → PCM delivery (`edge-node/src/integration_tests.rs` + `brain-node/src/integration_tests.rs::mtls_audio_stream_handshake_and_pcm_delivery`)
+- [x] Integration test: 3 concurrent mock edge nodes streaming simultaneously (`brain-node/src/integration_tests.rs`)
 
 ## Done When
 PR merged to master with CI green and manual test on Pi hardware: mTLS pairing confirmed, wake word triggers stream, PCM arrives at brain.

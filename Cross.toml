@@ -1,0 +1,25 @@
+[build.env]
+passthrough = ["BRAIN_GRPC_PORT", "BRAIN_PAIR_PORT", "BRAIN_CERTS_DIR"]
+
+# Cross base images may ship with an ancient protoc (2.x, proto2 only).
+# We download a known-good protoc binary directly from GitHub so that
+# tonic_build can compile aether.proto (proto3 syntax) inside the container.
+[target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture arm64",
+    "apt-get update",
+    "apt-get install -y --no-install-recommends wget unzip libasound2-dev:arm64",
+    "wget -qO /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v25.3/protoc-25.3-linux-x86_64.zip",
+    "unzip -o /tmp/protoc.zip bin/protoc -d /usr/local",
+    "chmod +x /usr/local/bin/protoc",
+]
+
+[target.armv7-unknown-linux-gnueabihf]
+pre-build = [
+    "dpkg --add-architecture armhf",
+    "apt-get update",
+    "apt-get install -y --no-install-recommends wget unzip libasound2-dev:armhf",
+    "wget -qO /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v25.3/protoc-25.3-linux-x86_64.zip",
+    "unzip -o /tmp/protoc.zip bin/protoc -d /usr/local",
+    "chmod +x /usr/local/bin/protoc",
+]
