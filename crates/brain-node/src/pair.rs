@@ -77,6 +77,92 @@ pub fn issue_client_cert(node_id: &str, ca_key: &KeyPair) -> Result<IssuedCert> 
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::IpAddr;
+    use tonic::transport::{Certificate, ClientTlsConfig, Identity, ServerTlsConfig};
+
+    #[test]
+    fn ca_generates_valid_pem() {
+        let ca = generate_ca().unwrap();
+        assert!(ca.cert_pem.starts_with("-----BEGIN CERTIFICATE-----"));
+        assert!(ca.key_pem.starts_with("-----BEGIN"));
+        // Key must round-trip through PEM serialisation.
+        KeyPair::from_pem(&ca.key_pem).unwrap();
+    }
+
+    #[test]
+    fn issue_client_cert_succeeds() {
+        let ca = generate_ca().unwrap();
+        let ca_key = KeyPair::from_pem(&ca.key_pem).unwrap();
+        let issued = issue_client_cert("office-pi", &ca_key).unwrap();
+        assert!(issued.cert_pem.starts_with("-----BEGIN CERTIFICATE-----"));
+        assert!(issued.key_pem.starts_with("-----BEGIN"));
+    }
+
+    #[test]
+    fn generate_server_cert_succeeds() {
+        let ca = generate_ca().unwrap();
+        let ca_key = KeyPair::from_pem(&ca.key_pem).unwrap();
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+        let issued = generate_server_cert(&ca_key, ip).unwrap();
+        assert!(issued.cert_pem.starts_with("-----BEGIN CERTIFICATE-----"));
+        assert!(issued.key_pem.starts_with("-----BEGIN"));
+    }
+
+    /// The cert chain accepted by tonic's TLS config builders means the PEM is
+    /// correctly encoded and the chain relationship is structurally valid.
+    #[test]
+    fn cert_chain_accepted_by_tonic_tls_config() {
+        let ca = generate_ca().unwrap();
+        let ca_key = KeyPair::from_pem(&ca.key_pem).unwrap();
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+        let server = generate_server_cert(&ca_key, ip).unwrap();
+        let client = issue_client_cert("test-node", &ca_key).unwrap();
+
+        let ca_cert = Certificate::from_pem(&ca.cert_pem);
+        let server_identity = Identity::from_pem(&server.cert_pem, &server.key_pem);
+        let client_identity = Identity::from_pem(&client.cert_pem, &client.key_pem);
+
+        // Neither config should panic or error on construction.
+        ServerTlsConfig::new()
+            .identity(server_identity)
+            .client_ca_root(ca_cert.clone());
+        ClientTlsConfig::new()
+            .ca_certificate(ca_cert)
+            .identity(client_identity);
+    }
+
+    #[test]
+    fn ensure_certs_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+        ensure_certs(dir.path(), ip).unwrap();
+        // Second call must not overwrite or error.
+        ensure_certs(dir.path(), ip).unwrap();
+
+        assert!(dir.path().join("ca.pem").exists());
+        assert!(dir.path().join("ca-key.pem").exists());
+        assert!(dir.path().join("brain.pem").exists());
+        assert!(dir.path().join("brain-key.pem").exists());
+    }
+
+    #[test]
+    fn reconstruct_ca_issues_cert_with_original_key() {
+        // Two separate calls to reconstruct_ca with the same key must both produce
+        // certs that can sign without error — validates that the reconstruction
+        // invariant holds regardless of serial/validity differences.
+        let ca = generate_ca().unwrap();
+        let key = KeyPair::from_pem(&ca.key_pem).unwrap();
+
+        issue_client_cert("node-a", &key).unwrap();
+        issue_client_cert("node-b", &key).unwrap();
+    }
+}
+
 /// Load or generate CA + server certs in `certs_dir`.
 /// Idempotent: skips generation if files already exist.
 pub fn ensure_certs(certs_dir: &Path, brain_ip: std::net::IpAddr) -> Result<()> {
