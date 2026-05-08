@@ -10,7 +10,7 @@ Before staging, committing, or pushing anything, explicitly list the files to be
 
 Aether is a local-first, privacy-centric smart speaker built in Rust. It runs all AI inference (STT, LLM, TTS) on the user's own hardware with no external API calls.
 
-**Core concept:** decouple always-on edge listening (ARM SBC nodes) from heavy AI inference (a local x86 GPU machine), connected via gRPC over an encrypted Tailscale network.
+**Core concept:** decouple always-on edge listening (ARM SBC nodes) from heavy AI inference (a Dockerised brain node), connected via mTLS gRPC over a local network. Nodes discover the brain automatically via mDNS — no accounts, no external services, no manual config.
 
 ## What's Safe to Be Public
 
@@ -24,7 +24,7 @@ Aether is a local-first, privacy-centric smart speaker built in Rust. It runs al
 ## What Must Stay Private
 
 - Specific hardware model names and specs (see `private/CLAUDE.md`)
-- Network topology, IP addresses, Tailscale node names
+- Network topology, IP addresses, node hostnames
 - Any API keys, access tokens, or credentials
 - Porcupine `.ppn` model files or access keys
 - Personal use-case details (home/office layout, etc.)
@@ -35,7 +35,8 @@ Aether is a local-first, privacy-centric smart speaker built in Rust. It runs al
 - **Language:** Rust (memory safety + zero-cost async for audio buffers)
 - **Audio:** `cpal`
 - **Wake Word:** Porcupine (`pvporcupine`)
-- **Networking:** `tonic` (gRPC) / Tailscale
+- **Discovery:** `mdns-sd` (zero-config brain discovery on local network)
+- **Networking:** `tonic` (gRPC) over mTLS (`rustls` + `rcgen` for local CA)
 - **STT:** `whisper-rs` (Whisper.cpp bindings)
 - **LLM:** Ollama
 - **TTS:** Piper or Kokoro-82M
