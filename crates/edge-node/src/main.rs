@@ -1,5 +1,6 @@
 mod audio;
 mod brain_conn;
+#[allow(dead_code)] // wired up in Phase 3 (hardware peripheral detection)
 mod device_discovery;
 #[cfg(test)]
 mod integration_tests;

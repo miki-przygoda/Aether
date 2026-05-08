@@ -1,39 +1,5 @@
 use anyhow::{Context, Result};
 use mdns_sd::{ServiceDaemon, ServiceEvent};
-
-#[cfg(test)]
-mod tests {
-    use super::PairedConfig;
-
-    #[test]
-    fn seq_wraps_at_u64_max() {
-        // Validates the wrapping_add pattern used in stream_audio.
-        assert_eq!(u64::MAX.wrapping_add(1), 0);
-    }
-
-    #[test]
-    fn paired_config_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
-        let cfg = PairedConfig {
-            node_id: "office-pi".to_string(),
-            brain_addr: "192.168.1.100:50051".to_string(),
-        };
-        cfg.save(dir.path()).unwrap();
-
-        let loaded = PairedConfig::load(dir.path()).unwrap();
-        assert_eq!(loaded.node_id, "office-pi");
-        assert_eq!(loaded.brain_addr, "192.168.1.100:50051");
-    }
-
-    #[test]
-    fn paired_config_load_fails_on_missing_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        // Point at a subdirectory that doesn't exist.
-        let missing = dir.path().join("no_such_dir");
-        assert!(PairedConfig::load(&missing).is_err());
-    }
-}
-
 use std::path::Path;
 use std::time::Duration;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
@@ -197,4 +163,37 @@ pub async fn stream_audio(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PairedConfig;
+
+    #[test]
+    fn seq_wraps_at_u64_max() {
+        // Validates the wrapping_add pattern used in stream_audio.
+        assert_eq!(u64::MAX.wrapping_add(1), 0);
+    }
+
+    #[test]
+    fn paired_config_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = PairedConfig {
+            node_id: "office-pi".to_string(),
+            brain_addr: "192.168.1.100:50051".to_string(),
+        };
+        cfg.save(dir.path()).unwrap();
+
+        let loaded = PairedConfig::load(dir.path()).unwrap();
+        assert_eq!(loaded.node_id, "office-pi");
+        assert_eq!(loaded.brain_addr, "192.168.1.100:50051");
+    }
+
+    #[test]
+    fn paired_config_load_fails_on_missing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        // Point at a subdirectory that doesn't exist.
+        let missing = dir.path().join("no_such_dir");
+        assert!(PairedConfig::load(&missing).is_err());
+    }
 }

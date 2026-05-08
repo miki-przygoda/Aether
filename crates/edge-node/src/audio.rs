@@ -41,6 +41,28 @@ pub fn start_capture(tx: mpsc::Sender<Vec<f32>>) -> Result<cpal::Stream> {
     Ok(stream)
 }
 
+fn build_stream<T>(
+    device: &cpal::Device,
+    config: &StreamConfig,
+    tx: mpsc::Sender<Vec<f32>>,
+    convert: fn(T) -> f32,
+) -> Result<cpal::Stream>
+where
+    T: cpal::SizedSample + Send + 'static,
+{
+    let stream = device.build_input_stream(
+        config,
+        move |data: &[T], _: &cpal::InputCallbackInfo| {
+            let samples: Vec<f32> = data.iter().copied().map(convert).collect();
+            // Non-blocking send; drop chunks if the consumer falls behind.
+            let _ = tx.try_send(samples);
+        },
+        |err| tracing::error!("audio stream error: {err}"),
+        None,
+    )?;
+    Ok(stream)
+}
+
 // Device-specific validation (mic present, correct ALSA device, acceptable noise
 // floor) cannot be unit-tested meaningfully — cpal::default_input_device() returns
 // whatever the OS considers default, which differs per machine.  The right place
@@ -89,26 +111,4 @@ mod tests {
         assert_eq!(cvt(0.5_f32), 0.5);
         assert_eq!(cvt(-1.0_f32), -1.0);
     }
-}
-
-fn build_stream<T>(
-    device: &cpal::Device,
-    config: &StreamConfig,
-    tx: mpsc::Sender<Vec<f32>>,
-    convert: fn(T) -> f32,
-) -> Result<cpal::Stream>
-where
-    T: cpal::SizedSample + Send + 'static,
-{
-    let stream = device.build_input_stream(
-        config,
-        move |data: &[T], _: &cpal::InputCallbackInfo| {
-            let samples: Vec<f32> = data.iter().copied().map(convert).collect();
-            // Non-blocking send; drop chunks if the consumer falls behind.
-            let _ = tx.try_send(samples);
-        },
-        |err| tracing::error!("audio stream error: {err}"),
-        None,
-    )?;
-    Ok(stream)
 }

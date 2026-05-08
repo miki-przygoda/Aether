@@ -77,6 +77,37 @@ pub fn issue_client_cert(node_id: &str, ca_key: &KeyPair) -> Result<IssuedCert> 
     })
 }
 
+/// Load or generate CA + server certs in `certs_dir`.
+/// Idempotent: skips generation if files already exist.
+pub fn ensure_certs(certs_dir: &Path, brain_ip: std::net::IpAddr) -> Result<()> {
+    std::fs::create_dir_all(certs_dir)
+        .with_context(|| format!("creating certs dir {}", certs_dir.display()))?;
+
+    let ca_key_path = certs_dir.join("ca-key.pem");
+    let ca_cert_path = certs_dir.join("ca.pem");
+
+    if !ca_key_path.exists() || !ca_cert_path.exists() {
+        tracing::info!("generating new local CA");
+        let ca = generate_ca()?;
+        std::fs::write(&ca_cert_path, &ca.cert_pem)?;
+        std::fs::write(&ca_key_path, &ca.key_pem)?;
+    }
+
+    let server_cert_path = certs_dir.join("brain.pem");
+    let server_key_path = certs_dir.join("brain-key.pem");
+
+    if !server_cert_path.exists() || !server_key_path.exists() {
+        tracing::info!("generating brain server cert (IP SAN: {brain_ip})");
+        let ca_key_pem = std::fs::read_to_string(&ca_key_path)?;
+        let ca_key = KeyPair::from_pem(&ca_key_pem)?;
+        let issued = generate_server_cert(&ca_key, brain_ip)?;
+        std::fs::write(&server_cert_path, &issued.cert_pem)?;
+        std::fs::write(&server_key_path, &issued.key_pem)?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,35 +192,4 @@ mod tests {
         issue_client_cert("node-a", &key).unwrap();
         issue_client_cert("node-b", &key).unwrap();
     }
-}
-
-/// Load or generate CA + server certs in `certs_dir`.
-/// Idempotent: skips generation if files already exist.
-pub fn ensure_certs(certs_dir: &Path, brain_ip: std::net::IpAddr) -> Result<()> {
-    std::fs::create_dir_all(certs_dir)
-        .with_context(|| format!("creating certs dir {}", certs_dir.display()))?;
-
-    let ca_key_path = certs_dir.join("ca-key.pem");
-    let ca_cert_path = certs_dir.join("ca.pem");
-
-    if !ca_key_path.exists() || !ca_cert_path.exists() {
-        tracing::info!("generating new local CA");
-        let ca = generate_ca()?;
-        std::fs::write(&ca_cert_path, &ca.cert_pem)?;
-        std::fs::write(&ca_key_path, &ca.key_pem)?;
-    }
-
-    let server_cert_path = certs_dir.join("brain.pem");
-    let server_key_path = certs_dir.join("brain-key.pem");
-
-    if !server_cert_path.exists() || !server_key_path.exists() {
-        tracing::info!("generating brain server cert (IP SAN: {brain_ip})");
-        let ca_key_pem = std::fs::read_to_string(&ca_key_path)?;
-        let ca_key = KeyPair::from_pem(&ca_key_pem)?;
-        let issued = generate_server_cert(&ca_key, brain_ip)?;
-        std::fs::write(&server_cert_path, &issued.cert_pem)?;
-        std::fs::write(&server_key_path, &issued.key_pem)?;
-    }
-
-    Ok(())
 }
