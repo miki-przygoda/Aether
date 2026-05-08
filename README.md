@@ -18,10 +18,10 @@ Commercial smart speakers trade convenience for privacy. Aether takes a differen
   Edge Node 1 ──┐
   (ARM SBC)     │                     ┌─────────────────────────────┐
                 ├── mTLS gRPC ──────► │   Brain Node (Docker)       │
-  Edge Node 2 ──┤   (local network)   │  ┌──────────┐ ┌─────────┐  │
-  (ARM SBC)     │                     │  │brain-node│ │ ollama  │  │
-                │   WAV stream ◄───── │  │  Rust    │ │  LLM   │  │
-  Edge Node N ──┘                     │  └──────────┘ └─────────┘  │
+  Edge Node 2 ──┤   (local network)   │  ┌──────────┐ ┌─────────┐   │
+  (ARM SBC)     │                     │  │brain-node│ │ ollama  │   │
+                │   WAV stream ◄───── │  │  Rust    │ │  LLM    │   │
+  Edge Node N ──┘                     │  └──────────┘ └─────────┘   │
                                       └─────────────────────────────┘
 ```
 
@@ -31,20 +31,20 @@ Edge nodes discover the brain automatically on the local network via mDNS — no
 
 ## Tech Stack
 
-| Layer | Technology |
-|:---|:---|
-| **Language** | Rust |
-| **Audio I/O** | `cpal` (ALSA / PulseAudio) |
-| **Wake Word** | Porcupine (local, on-device) |
-| **Discovery** | `mdns-sd` (zero-config local network) |
-| **Networking** | `tonic` (gRPC) over mTLS |
-| **TLS** | `rustls` + `rcgen` (self-hosted CA) |
-| **STT** | Whisper.cpp via `whisper-rs` |
-| **LLM** | Ollama (Llama 3.2 / Mistral Nemo) |
-| **TTS** | Piper (fast) or Kokoro-82M (natural) |
-| **GPIO / Hardware** | `rppal` (I2C, PWM, GPIO) |
-| **Brain Deployment** | Docker Compose (CPU default, GPU opt-in) |
-| **Cross-compilation** | `cross-rs` |
+| Layer                 | Technology                               |
+|:----------------------|:-----------------------------------------|
+| **Language**          | Rust                                     |
+| **Audio I/O**         | `cpal` (ALSA / PulseAudio)               |
+| **Wake Word**         | Porcupine (local, on-device)             |
+| **Discovery**         | `mdns-sd` (zero-config local network)    |
+| **Networking**        | `tonic` (gRPC) over mTLS                 |
+| **TLS**               | `rustls` + `rcgen` (self-hosted CA)      |
+| **STT**               | Whisper.cpp via `whisper-rs`             |
+| **LLM**               | Ollama (Llama 3.2 / Mistral Nemo)        |
+| **TTS**               | Piper (fast) or Kokoro-82M (natural)     |
+| **GPIO / Hardware**   | `rppal` (I2C, PWM, GPIO)                 |
+| **Brain Deployment**  | Docker Compose (CPU default, GPU opt-in) |
+| **Cross-compilation** | `cross-rs`                               |
 
 ---
 
