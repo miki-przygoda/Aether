@@ -32,17 +32,17 @@ All nodes communicate exclusively over a private, encrypted overlay network. No 
 
 ## Tech Stack
 
-| Layer | Technology |
-|:---|:---|
-| **Language** | Rust |
-| **Audio I/O** | `cpal` (ALSA / PulseAudio) |
-| **Wake Word** | Porcupine (local, on-device) |
-| **Networking** | `tonic` (gRPC) over Tailscale |
-| **STT** | Whisper.cpp via `whisper-rs` (GPU-accelerated) |
-| **LLM** | Ollama (Llama 3.2 / Mistral Nemo) |
-| **TTS** | Piper (fast) or Kokoro-82M (natural) |
-| **GPIO / Hardware** | `rppal` (I2C, PWM, GPIO) |
-| **Cross-compilation** | `cross-rs` |
+| Layer                 | Technology                                     |
+|:----------------------|:-----------------------------------------------|
+| **Language**          | Rust                                           |
+| **Audio I/O**         | `cpal` (ALSA / PulseAudio)                     |
+| **Wake Word**         | Porcupine (local, on-device)                   |
+| **Networking**        | `tonic` (gRPC) over Tailscale                  |
+| **STT**               | Whisper.cpp via `whisper-rs` (GPU-accelerated) |
+| **LLM**               | Ollama (Llama 3.2 / Mistral Nemo)              |
+| **TTS**               | Piper (fast) or Kokoro-82M (natural)           |
+| **GPIO / Hardware**   | `rppal` (I2C, PWM, GPIO)                       |
+| **Cross-compilation** | `cross-rs`                                     |
 
 ---
 
