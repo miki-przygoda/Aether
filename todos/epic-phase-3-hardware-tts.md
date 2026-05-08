@@ -30,15 +30,15 @@ work is wiring in the actual I2C bus scan and the USB hotplug watcher.
 
 **Peripheral categories and their detection mechanism:**
 
-| Category | Detection | Notes |
-|---|---|---|
-| USB mic/speaker | ALSA auto-enumerates via udev; read `/proc/asound/cards` | Works out of the box — no app code needed beyond scanning |
-| I2C mic arrays (ES7210, AC108) | `rppal::i2c` bus scan; match against `KNOWN_I2C_CHIPS` registry | Probe each 7-bit address 0x08–0x77; treat ACK as present |
-| I2C codecs (WM8960, TLV320) | Same I2C scan | One chip handles mic in + speaker out |
-| I2S MEMS mics (INMP441, ICS-43432, SPH0645) | No I2C — appear as ALSA cards once devicetree overlay loaded | Enable overlay in `/boot/config.txt`; after that, ALSA scan finds them |
-| Pi HATs with EEPROM | OS reads EEPROM at boot, loads DT overlay automatically | Read identity from `/proc/device-tree/hat/vendor` + `/product` |
-| GPIO (buttons, LEDs) | No detection — pin numbers come from config | Assignments documented in `private/CLAUDE.md` |
-| SPI displays | Requires DT config; not auto-detectable | Out of scope for audio path |
+| Category                                    | Detection                                                       | Notes                                                                  |
+|---------------------------------------------|-----------------------------------------------------------------|------------------------------------------------------------------------|
+| USB mic/speaker                             | ALSA auto-enumerates via udev; read `/proc/asound/cards`        | Works out of the box — no app code needed beyond scanning              |
+| I2C mic arrays (ES7210, AC108)              | `rppal::i2c` bus scan; match against `KNOWN_I2C_CHIPS` registry | Probe each 7-bit address 0x08–0x77; treat ACK as present               |
+| I2C codecs (WM8960, TLV320)                 | Same I2C scan                                                   | One chip handles mic in + speaker out                                  |
+| I2S MEMS mics (INMP441, ICS-43432, SPH0645) | No I2C — appear as ALSA cards once devicetree overlay loaded    | Enable overlay in `/boot/config.txt`; after that, ALSA scan finds them |
+| Pi HATs with EEPROM                         | OS reads EEPROM at boot, loads DT overlay automatically         | Read identity from `/proc/device-tree/hat/vendor` + `/product`         |
+| GPIO (buttons, LEDs)                        | No detection — pin numbers come from config                     | Assignments documented in `private/CLAUDE.md`                          |
+| SPI displays                                | Requires DT config; not auto-detectable                         | Out of scope for audio path                                            |
 
 - [ ] Wire `rppal::i2c` I2C bus scan into `device_discovery::discover()` — iterate `/dev/i2c-*`, probe each address in `KNOWN_I2C_CHIPS`, populate `DiscoveredDevices::i2c_chips`
 - [ ] Add `inotify` watch on `/dev/snd/` for USB audio hotplug; re-call `scan_alsa_cards()` on change and log newly appeared/disappeared cards
