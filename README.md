@@ -15,11 +15,11 @@ Commercial smart speakers trade convenience for privacy. Aether takes a differen
 ## Architecture
 
 ```
-┌─────────────────────┐        gRPC / Tailscale VPN        ┌──────────────────────┐
+┌─────────────────────┐        gRPC / Tailscale VPN         ┌──────────────────────┐
 │     Edge Node(s)    │ ──────────────────────────────────► │     Brain Node       │
 │  (ARM SBC)          │                                     │  (x86 PC + GPU)      │
 │                     │                                     │                      │
-│  • Wake word detect │ ◄────────────── WAV stream ─────── │  • Whisper STT       │
+│  • Wake word detect │ ◄────────────── WAV stream ───────  │  • Whisper STT       │
 │  • Audio capture    │                                     │  • Ollama LLM        │
 │  • GPIO / LEDs      │                                     │  • Piper / Kokoro TTS│
 │  • Audio playback   │                                     │                      │
