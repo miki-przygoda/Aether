@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package aether;
+
+// The brain-node gRPC service.  Edge nodes call into this.
+service AetherBrain {
+  // Bidirectional audio stream.  Edge sends raw PCM; brain streams responses.
+  // The edge node MUST include "x-node-id" in the initial request metadata.
+  rpc AudioStream(stream AudioChunk) returns (stream BrainResponse);
+
+  // Certificate issuance during the wired pairing ceremony.
+  // Served on a separate plain (non-TLS) port; not exposed on the mTLS listener.
+  rpc Pair(PairRequest) returns (PairResponse);
+}
+
+// Raw PCM audio from an edge node.
+message AudioChunk {
+  bytes  pcm = 1; // f32le, 16 kHz, mono — 512 samples = 2048 bytes per chunk
+  uint64 seq = 2; // monotonic counter; gaps indicate dropped chunks
+}
+
+// Response streamed back to the edge node.
+// Only one payload field is set per message; the others are absent.
+message BrainResponse {
+  oneof payload {
+    TranscriptUpdate transcript = 1; // partial or final STT result  (Phase 2+)
+    TtsChunk         tts_audio  = 2; // synthesised speech chunk     (Phase 2+)
+    SkillAction      action     = 3; // structured skill dispatch     (Phase 2+)
+  }
+}
+
+message TranscriptUpdate {
+  string text       = 1;
+  bool   is_final   = 2;
+  float  confidence = 3;
+}
+
+message TtsChunk {
+  bytes wav = 1; // WAV audio bytes; edge node concatenates and plays back
+}
+
+message SkillAction {
+  string action      = 1;
+  string params_json = 2; // JSON-encoded skill parameters
+}
+
+// Pairing request: edge node identifies itself.
+message PairRequest {
+  string node_id = 1;
+}
+
+// Brain issues a fresh client identity for the edge node.
+// All fields are PEM-encoded.
+message PairResponse {
+  bytes client_private_key = 1;
+  bytes client_certificate = 2;
+  bytes ca_certificate     = 3;
+}
