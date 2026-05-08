@@ -1,0 +1,16 @@
+[build.env]
+passthrough = ["BRAIN_GRPC_PORT", "BRAIN_PAIR_PORT", "BRAIN_CERTS_DIR"]
+
+[target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture arm64",
+    "apt-get update",
+    "apt-get install -y --no-install-recommends protobuf-compiler libasound2-dev:arm64",
+]
+
+[target.armv7-unknown-linux-gnueabihf]
+pre-build = [
+    "dpkg --add-architecture armhf",
+    "apt-get update",
+    "apt-get install -y --no-install-recommends protobuf-compiler libasound2-dev:armhf",
+]
