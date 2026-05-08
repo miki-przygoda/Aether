@@ -1,4 +1,6 @@
 mod grpc;
+#[cfg(test)]
+mod integration_tests;
 mod mdns_adv;
 mod pair;
 mod session;
