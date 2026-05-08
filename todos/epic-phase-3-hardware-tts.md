@@ -45,7 +45,7 @@ Wire the GPIO hardware on the edge node to the assistant's state machine (LEDs, 
 - [ ] Auxiliary mode: connects to target edge node SSE, drives its own LEDs to mirror state
 
 ### TTS Settings Integration
-- [ ] Add `TtsSettings` struct to `shared::types`: speed (f32), pitch (f32), voice (String)
+- [ ] Add `TtsSettings` struct to `aether-core::types`: speed (f32), pitch (f32), voice (String)
 - [ ] Load `TtsSettings` from brain config (file or env); apply during Kokoro synthesis
 - [ ] Persist settings to Docker volume so they survive restarts
 

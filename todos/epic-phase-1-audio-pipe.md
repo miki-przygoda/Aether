@@ -36,7 +36,7 @@ Establish the full audio path from microphone capture on the edge node to raw PC
 
 ### Edge Node
 - [ ] Add `cpal` to `edge-node`; capture mic input into a ring buffer (512-sample, 16kHz mono)
-- [ ] Define `WakeWordDetector` trait in `shared`
+- [ ] Define `WakeWordDetector` trait in `aether-core`
 - [ ] Implement `RustpotterDetector` in `edge-node` backed by the shipped baseline model
 - [ ] Add `mdns-sd` to `edge-node`; discover `_aether._tcp.local` on boot, retry until found
 - [ ] Load client cert from local storage (provisioned during pairing)

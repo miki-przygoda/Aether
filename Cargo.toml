@@ -1,7 +1,11 @@
 [workspace]
 members = [
-    "edge-node",
-    "brain-node",
-    "shared",
+    "crates/edge-node",
+    "crates/brain-node",
+    "crates/aether-core",
 ]
 resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"

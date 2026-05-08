@@ -29,6 +29,17 @@ Edge nodes discover the brain automatically on the local network via mDNS — no
 
 ---
 
+## Repository Layout
+
+```
+crates/
+├── aether-core/   — shared types and traits (LlmResponse, NodeState, …)
+├── brain-node/    — Docker-deployed inference server (STT · LLM · TTS)
+└── edge-node/     — ARM SBC binary (wake word · audio capture · gRPC client)
+```
+
+---
+
 ## Tech Stack
 
 | Layer                 | Technology                               |
