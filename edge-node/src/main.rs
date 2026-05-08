@@ -11,7 +11,5 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn placeholder() {
-        assert!(true);
-    }
+    fn placeholder() {}
 }
