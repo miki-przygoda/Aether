@@ -128,6 +128,7 @@ async fn serve(
         registry: SessionRegistry::new(),
         certs_dir,
         stt: stt_engine,
+        trie: Arc::new(aether_core::CommandTrie::default()),
     };
 
     let _mdns = match local_ip {
@@ -157,6 +158,7 @@ async fn run_pair_server(port: u16, certs_dir: PathBuf) -> Result<()> {
         registry: SessionRegistry::new(),
         certs_dir,
         stt: None,
+        trie: Arc::new(aether_core::CommandTrie::default()),
     };
 
     tracing::info!(%addr, "pairing server listening (plain gRPC)");

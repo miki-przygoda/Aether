@@ -1,5 +1,6 @@
 use crate::session::SessionRegistry;
 use crate::stt::{bytes_to_f32le, SpeechToText};
+use aether_core::trie::{ClassifyResult, CommandTrie};
 use aether_core::NodeState;
 use std::sync::Arc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -11,7 +12,7 @@ pub mod proto {
 
 use proto::{
     aether_brain_server::AetherBrain, brain_response, AudioChunk, BrainResponse, PairRequest,
-    PairResponse, TranscriptUpdate,
+    PairResponse, SkillAction, TranscriptUpdate,
 };
 
 #[derive(Clone)]
@@ -19,6 +20,7 @@ pub struct BrainService {
     pub registry: SessionRegistry,
     pub certs_dir: std::path::PathBuf,
     pub stt: Option<Arc<dyn SpeechToText>>,
+    pub trie: Arc<CommandTrie>,
 }
 
 #[tonic::async_trait]
@@ -41,6 +43,7 @@ impl AetherBrain for BrainService {
         let registry = self.registry.clone();
         let nid = node_id.clone();
         let stt = self.stt.clone();
+        let trie = self.trie.clone();
 
         registry.register(node_id.clone()).await;
         registry.set_state(&node_id, NodeState::Listening).await;
@@ -76,15 +79,43 @@ impl AetherBrain for BrainService {
                             confidence = t.confidence,
                             "transcript ready"
                         );
-                        let msg = BrainResponse {
+
+                        let transcript_msg = BrainResponse {
                             payload: Some(brain_response::Payload::Transcript(TranscriptUpdate {
-                                text: t.text,
+                                text: t.text.clone(),
                                 is_final: true,
                                 confidence: t.confidence,
                             })),
                         };
-                        if tx.send(Ok(msg)).await.is_err() {
-                            tracing::warn!(node_id = %nid2, "edge disconnected before transcript delivered");
+                        if tx.send(Ok(transcript_msg)).await.is_err() {
+                            tracing::warn!(
+                                node_id = %nid2,
+                                "edge disconnected before transcript delivered"
+                            );
+                        }
+
+                        match trie.classify(&t.text) {
+                            ClassifyResult::Match(action) => {
+                                tracing::info!(
+                                    node_id = %nid2,
+                                    action = action.as_str(),
+                                    "trie matched — dispatching directly"
+                                );
+                                let action_msg = BrainResponse {
+                                    payload: Some(brain_response::Payload::Action(SkillAction {
+                                        action: action.as_str().to_string(),
+                                        params_json: "{}".to_string(),
+                                    })),
+                                };
+                                let _ = tx.send(Ok(action_msg)).await;
+                            }
+                            _ => {
+                                // TODO: route to LLM fast tier (Phase 2 PR 3)
+                                tracing::info!(
+                                    node_id = %nid2,
+                                    "no trie match — LLM path not yet implemented"
+                                );
+                            }
                         }
                     }
                     Ok(Err(e)) => tracing::error!(node_id = %nid, "STT error: {e}"),

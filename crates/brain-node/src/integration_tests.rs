@@ -21,6 +21,7 @@ async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
         registry: registry.clone(),
         certs_dir: std::path::PathBuf::from("/tmp"),
         stt: None,
+        trie: Arc::new(aether_core::CommandTrie::default()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -156,6 +157,7 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
         registry: registry.clone(),
         certs_dir: std::path::PathBuf::from("/tmp"),
         stt: None,
+        trie: Arc::new(aether_core::CommandTrie::default()),
     };
 
     let server_tls = ServerTlsConfig::new()
@@ -277,6 +279,7 @@ async fn stt_transcription_sends_transcript_update() {
         registry: registry.clone(),
         certs_dir: std::path::PathBuf::from("/tmp"),
         stt: Some(stt),
+        trie: Arc::new(aether_core::CommandTrie::default()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -329,5 +332,89 @@ async fn stt_transcription_sends_transcript_update() {
             assert!((t.confidence - 0.92).abs() < 1e-5, "confidence mismatch");
         }
         other => panic!("expected Transcript payload, got: {other:?}"),
+    }
+}
+
+/// MockStt returns "play music" — verifies trie dispatch: brain sends TranscriptUpdate
+/// immediately followed by a SkillAction with action = "play_music", no LLM call needed.
+#[tokio::test]
+async fn trie_match_sends_skill_action() {
+    use crate::grpc::proto::brain_response;
+
+    let stt: Arc<dyn SpeechToText> = Arc::new(MockStt {
+        text: "play music".to_string(),
+        confidence: 0.95,
+    });
+
+    let registry = SessionRegistry::new();
+    let service = BrainService {
+        registry: registry.clone(),
+        certs_dir: std::path::PathBuf::from("/tmp"),
+        stt: Some(stt),
+        trie: Arc::new(aether_core::CommandTrie::default()),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(
+        Server::builder()
+            .add_service(AetherBrainServer::new(service))
+            .serve_with_incoming(TcpListenerStream::new(listener)),
+    );
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    let channel = tonic::transport::Channel::from_shared(format!("http://{addr}"))
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<AudioChunk>(8);
+    let mut client = AetherBrainClient::new(channel);
+    let stream = ReceiverStream::new(rx);
+    let mut req = tonic::Request::new(stream);
+    req.metadata_mut()
+        .insert("x-node-id", "trie-test-pi".parse().unwrap());
+
+    let resp = client.audio_stream(req).await.unwrap();
+    let mut resp_stream = resp.into_inner();
+
+    for seq in 0u64..2 {
+        tx.send(AudioChunk {
+            pcm: vec![0u8; 2048],
+            seq,
+        })
+        .await
+        .unwrap();
+    }
+    drop(tx);
+
+    // First message: TranscriptUpdate.
+    let first: BrainResponse = tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
+        .await
+        .expect("timed out waiting for TranscriptUpdate")
+        .expect("stream error")
+        .expect("stream closed before TranscriptUpdate");
+
+    match first.payload {
+        Some(brain_response::Payload::Transcript(t)) => {
+            assert_eq!(t.text, "play music");
+            assert!(t.is_final);
+        }
+        other => panic!("expected Transcript, got: {other:?}"),
+    }
+
+    // Second message: SkillAction dispatched by the trie.
+    let second: BrainResponse = tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
+        .await
+        .expect("timed out waiting for SkillAction")
+        .expect("stream error")
+        .expect("stream closed before SkillAction");
+
+    match second.payload {
+        Some(brain_response::Payload::Action(a)) => {
+            assert_eq!(a.action, "play_music");
+        }
+        other => panic!("expected Action, got: {other:?}"),
     }
 }
