@@ -46,7 +46,10 @@ ggml-*.bin
 whisper-*.bin
 *.pt
 *.onnx
-models/
+models/*
+# Wake word assets are small and version-controlled (samples + .rpw trained model)
+!models/wake-word/
+!models/wake-word/**
 
 # ── Logs & Runtime State ──────────────────────────────────────────────────────
 *.log

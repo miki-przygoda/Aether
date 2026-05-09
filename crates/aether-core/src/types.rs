@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+/// Outcome returned by a `Skill` handler.
+#[derive(Debug, Clone)]
+pub struct SkillResult {
+    /// Text the TTS engine should speak back to the user.
+    pub spoken_reply: String,
+}
+
 /// Structured response the LLM must emit for every turn.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmResponse {
