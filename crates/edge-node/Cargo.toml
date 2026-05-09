@@ -34,7 +34,7 @@ hound = "3"
 dirs = "5"
 async-stream = "0.3"
 axum = "0.7"
-reqwest = { version = "0.12", features = ["stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
 rustpotter = { version = "3", optional = true }
 rppal = { version = "0.18", optional = true }
 

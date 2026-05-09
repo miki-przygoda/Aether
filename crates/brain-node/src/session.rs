@@ -26,6 +26,8 @@ impl SessionRegistry {
 
     /// Subscribe to state change events. Lagged receivers get
     /// `RecvError::Lagged` and should re-read current state.
+    /// Used by auxiliary nodes and the Phase 5 web UI dashboard.
+    #[allow(dead_code)]
     pub fn subscribe(&self) -> broadcast::Receiver<NodeStateEvent> {
         self.event_tx.subscribe()
     }
