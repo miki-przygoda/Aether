@@ -71,7 +71,7 @@ work is wiring in the actual I2C bus scan and the USB hotplug watcher.
 ### TTS Settings Integration
 - [x] Add `TtsSettings` struct to `aether-core::types`: speed (f32), voice (String)
 - [x] Load `TtsSettings` from brain config (env: `TTS_SPEED`, `TTS_VOICE`); apply during Kokoro synthesis
-- [ ] Persist settings to Docker volume so they survive restarts (deferred to Phase 5 web UI)
+- [ ] Persist settings to Docker vol ume so they survive restarts (deferred to Phase 5 web UI)
 
 ### Tests
 - [x] Unit tests: `device_discovery` — registry lookups, ALSA parser, HAT parser, discover() smoke (in `device_discovery.rs`)
