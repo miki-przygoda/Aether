@@ -1,4 +1,6 @@
 mod grpc;
+mod history;
+mod ingest;
 #[cfg(test)]
 mod integration_tests;
 mod llm;
@@ -8,6 +10,7 @@ mod session;
 mod skills;
 mod stt;
 mod tts;
+mod vector_store;
 
 use aether_core::TtsSettings;
 use anyhow::{Context, Result};
@@ -74,6 +77,23 @@ enum Command {
         /// TTS voice identifier (currently only "default" is supported).
         #[arg(long, env = "TTS_VOICE", default_value = "default")]
         tts_voice: String,
+
+        /// Qdrant gRPC URL. RAG and conversation history are disabled if not set.
+        #[arg(long, env = "QDRANT_URL")]
+        qdrant_url: Option<String>,
+
+        /// Ollama embedding model (used for RAG query embedding and document ingestion).
+        #[arg(long, env = "EMBED_MODEL", default_value = "nomic-embed-text")]
+        embed_model: String,
+
+        /// Number of conversation turns to inject as history context.
+        #[arg(long, env = "HISTORY_TURNS", default_value = "10")]
+        history_turns: usize,
+
+        /// Directory of documents to ingest into Qdrant on startup.
+        /// Accepts .txt and .md files. Skipped if QDRANT_URL is not set.
+        #[arg(long, env = "DOCUMENTS_DIR")]
+        documents_dir: Option<PathBuf>,
     },
 
     /// Pairing ceremony — plain (non-TLS) gRPC on a separate port.
@@ -124,6 +144,10 @@ async fn main() -> Result<()> {
             kokoro_model,
             tts_speed,
             tts_voice,
+            qdrant_url,
+            embed_model,
+            history_turns,
+            documents_dir,
         } => {
             serve(ServeArgs {
                 port,
@@ -138,6 +162,10 @@ async fn main() -> Result<()> {
                     speed: tts_speed,
                     voice: tts_voice,
                 },
+                qdrant_url,
+                embed_model,
+                history_turns,
+                documents_dir,
             })
             .await
         }
@@ -161,6 +189,10 @@ struct ServeArgs {
     llm_model: String,
     kokoro_model: Option<PathBuf>,
     tts_settings: TtsSettings,
+    qdrant_url: Option<String>,
+    embed_model: String,
+    history_turns: usize,
+    documents_dir: Option<PathBuf>,
 }
 
 async fn serve(args: ServeArgs) -> Result<()> {
@@ -174,6 +206,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
         llm_model,
         kokoro_model,
         tts_settings,
+        qdrant_url,
+        embed_model,
+        history_turns,
+        documents_dir,
     } = args;
     let local_ip = local_ip_address::local_ip().context("detecting local IP")?;
     tracing::info!(ip = %local_ip, "brain local address");
@@ -211,6 +247,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     };
 
     tracing::info!(url = %ollama_url, model = %llm_model, "configuring Ollama LLM client");
+    let embed_url = ollama_url.clone();
     let llm_engine: Option<Arc<dyn llm::LlmClient>> = Some(Arc::new(
         llm::OllamaClient::new(ollama_url, llm_model).context("creating Ollama client")?,
     ));
@@ -227,6 +264,44 @@ async fn serve(args: ServeArgs) -> Result<()> {
         None
     };
 
+    // ── Qdrant / RAG ──────────────────────────────────────────────────────────
+    let rag_config: Option<grpc::RagConfig> = if let Some(ref url) = qdrant_url {
+        use vector_store::{QdrantStore, VectorStore, COLLECTION_DOCUMENTS, COLLECTION_HISTORY};
+        tracing::info!(%url, "connecting to Qdrant");
+        let store = Arc::new(QdrantStore::new(url).context("creating Qdrant client")?)
+            as Arc<dyn VectorStore>;
+
+        // nomic-embed-text produces 768-dimensional vectors.
+        const EMBED_DIM: usize = 768;
+        store
+            .ensure_collection(COLLECTION_DOCUMENTS, EMBED_DIM)
+            .context("creating Qdrant documents collection")?;
+        store
+            .ensure_collection(COLLECTION_HISTORY, 1)
+            .context("creating Qdrant history collection")?;
+
+        // Ingest documents if a directory is configured.
+        if let Some(ref dir) = documents_dir {
+            tracing::info!(dir = %dir.display(), "ingesting documents");
+            match ingest::ingest_dir(dir, &store, &embed_url, &embed_model) {
+                Ok(n) => tracing::info!(chunks = n, "document ingestion complete"),
+                Err(e) => tracing::warn!("document ingestion failed: {e}"),
+            }
+        }
+
+        Some(grpc::RagConfig {
+            store,
+            qdrant_url: url.clone(),
+            embed_url,
+            embed_model,
+            history_turns,
+            score_threshold: 0.5,
+        })
+    } else {
+        tracing::warn!("QDRANT_URL not set — RAG and conversation history disabled");
+        None
+    };
+
     let addr: SocketAddr = ([0, 0, 0, 0], port).into();
     let service = BrainService {
         registry: SessionRegistry::new(),
@@ -237,6 +312,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         tts: tts_engine,
         tts_settings,
         skills: Arc::new(SkillRegistry::default()),
+        rag: rag_config,
     };
 
     let _mdns = match local_ip {
@@ -312,6 +388,7 @@ async fn run_pair_server(port: u16, certs_dir: PathBuf) -> Result<()> {
         tts: None,
         tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
+        rag: None,
     };
 
     tracing::info!(%addr, "pairing server listening (plain gRPC)");

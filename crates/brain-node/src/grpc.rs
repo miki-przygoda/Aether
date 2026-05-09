@@ -1,8 +1,11 @@
+use crate::history::{self, Role};
+use crate::ingest;
 use crate::llm::LlmClient;
 use crate::session::SessionRegistry;
 use crate::skills::SkillRegistry;
 use crate::stt::{bytes_to_f32le, SpeechToText};
 use crate::tts::TextToSpeech;
+use crate::vector_store::{VectorStore, COLLECTION_DOCUMENTS};
 use aether_core::trie::{ClassifyResult, CommandTrie};
 use aether_core::{NodeState, TtsSettings};
 use std::sync::Arc;
@@ -18,6 +21,22 @@ use proto::{
     PairResponse, SkillAction, TranscriptUpdate, TtsChunk,
 };
 
+/// Configuration for RAG and conversation history.
+/// `None` disables both features (used in tests and when Qdrant is not configured).
+#[derive(Clone)]
+pub struct RagConfig {
+    pub store: Arc<dyn VectorStore>,
+    /// Qdrant base URL (e.g. `http://qdrant:6334`) for scroll-based history retrieval.
+    pub qdrant_url: String,
+    /// Ollama base URL used for embedding the user query before searching documents.
+    pub embed_url: String,
+    pub embed_model: String,
+    /// Number of past turns to inject as conversation history.
+    pub history_turns: usize,
+    /// Minimum cosine similarity score for a document chunk to be included in context.
+    pub score_threshold: f32,
+}
+
 #[derive(Clone)]
 pub struct BrainService {
     pub registry: SessionRegistry,
@@ -28,6 +47,7 @@ pub struct BrainService {
     pub tts: Option<Arc<dyn TextToSpeech>>,
     pub tts_settings: TtsSettings,
     pub skills: Arc<SkillRegistry>,
+    pub rag: Option<RagConfig>,
 }
 
 #[tonic::async_trait]
@@ -55,6 +75,7 @@ impl AetherBrain for BrainService {
         let tts = self.tts.clone();
         let tts_settings = self.tts_settings.clone();
         let skills = self.skills.clone();
+        let rag = self.rag.clone();
 
         registry.register(node_id.clone()).await;
         registry.set_state(&node_id, NodeState::Listening).await;
@@ -156,11 +177,16 @@ impl AetherBrain for BrainService {
                                 if let Some(llm) = llm {
                                     let text = t.text;
                                     let nid3 = nid2.clone();
-                                    match tokio::task::spawn_blocking(move || llm.ask(&text)).await
+                                    let nid3_log = nid3.clone();
+                                    let rag3 = rag.clone();
+                                    match tokio::task::spawn_blocking(move || {
+                                        ask_with_rag(&*llm, rag3.as_ref(), &nid3, &text)
+                                    })
+                                    .await
                                     {
                                         Ok(Ok(resp)) => {
                                             tracing::info!(
-                                                node_id = %nid3,
+                                                node_id = %nid3_log,
                                                 action = ?resp.action,
                                                 "LLM response ready"
                                             );
@@ -189,17 +215,17 @@ impl AetherBrain for BrainService {
                                                 &tx,
                                                 tts.clone(),
                                                 &spoken_reply,
-                                                &nid3,
+                                                &nid3_log,
                                                 &tts_settings,
                                             )
                                             .await;
                                         }
                                         Ok(Err(e)) => {
-                                            tracing::error!(node_id = %nid3, "LLM error: {e}")
+                                            tracing::error!(node_id = %nid3_log, "LLM error: {e}")
                                         }
                                         Err(e) => {
                                             tracing::error!(
-                                                node_id = %nid3,
+                                                node_id = %nid3_log,
                                                 "LLM task panicked: {e}"
                                             )
                                         }
@@ -255,6 +281,92 @@ impl AetherBrain for BrainService {
             ca_certificate: ca_cert_pem.into_bytes(),
         }))
     }
+}
+
+// ─── RAG helpers ──────────────────────────────────────────────────────────────
+
+/// Build an augmented prompt that prepends conversation history and document
+/// context to the raw user transcript. Falls back to the plain transcript when
+/// both history and context are empty (no RAG configured, first turn, etc.).
+fn build_rag_prompt(transcript: &str, history_text: &str, context_text: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !history_text.is_empty() {
+        parts.push(format!("[History]\n{history_text}"));
+    }
+    if !context_text.is_empty() {
+        parts.push(format!("[Context]\n{context_text}"));
+    }
+    if parts.is_empty() {
+        return transcript.to_string();
+    }
+    parts.push(format!("[User]\n{transcript}"));
+    parts.join("\n\n")
+}
+
+/// Call the LLM with RAG context and conversation history injected into the prompt.
+/// Also stores the user and assistant turns in the history collection.
+///
+/// When `rag` is `None` this degrades to a plain `llm.ask(transcript)` call.
+fn ask_with_rag(
+    llm: &dyn LlmClient,
+    rag: Option<&RagConfig>,
+    node_id: &str,
+    transcript: &str,
+) -> anyhow::Result<aether_core::LlmResponse> {
+    // 1. Retrieve conversation history.
+    let history_text = rag
+        .map(|r| {
+            history::scroll_recent(&r.qdrant_url, node_id, r.history_turns)
+                .map(|turns| history::format_history(&turns))
+                .unwrap_or_else(|e| {
+                    tracing::warn!(node_id, "history retrieval failed: {e}");
+                    String::new()
+                })
+        })
+        .unwrap_or_default();
+
+    // 2. Embed query and retrieve top document chunks.
+    let context_text = rag
+        .map(|r| {
+            ingest::embed(&r.embed_url, &r.embed_model, transcript)
+                .and_then(|vec| r.store.search(COLLECTION_DOCUMENTS, vec, 3))
+                .map(|results| {
+                    let chunks: Vec<&str> = results
+                        .iter()
+                        .filter(|res| res.score >= r.score_threshold)
+                        .filter_map(|res| res.payload["text"].as_str())
+                        .collect();
+                    if chunks.is_empty() {
+                        tracing::debug!(node_id, "RAG: no chunks above score threshold");
+                    }
+                    chunks.join("\n\n---\n\n")
+                })
+                .unwrap_or_else(|e| {
+                    tracing::warn!(node_id, "RAG retrieval failed: {e}");
+                    String::new()
+                })
+        })
+        .unwrap_or_default();
+
+    // 3. Store user turn before calling LLM (so it's in history on retry).
+    if let Some(r) = rag {
+        if let Err(e) = history::store_turn(&r.store, node_id, Role::User, transcript) {
+            tracing::warn!(node_id, "failed to store user turn: {e}");
+        }
+    }
+
+    // 4. Call LLM with augmented prompt.
+    let prompt = build_rag_prompt(transcript, &history_text, &context_text);
+    let resp = llm.ask(&prompt)?;
+
+    // 5. Store assistant turn.
+    if let Some(r) = rag {
+        if let Err(e) = history::store_turn(&r.store, node_id, Role::Assistant, &resp.response) {
+            tracing::warn!(node_id, "failed to store assistant turn: {e}");
+        }
+    }
+
+    Ok(resp)
 }
 
 // ─── TTS helper ───────────────────────────────────────────────────────────────

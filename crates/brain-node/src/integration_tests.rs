@@ -30,6 +30,7 @@ async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
         tts: None,
         tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
+        rag: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -192,6 +193,7 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
         tts: None,
         tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
+        rag: None,
     };
 
     let server_tls = ServerTlsConfig::new()
@@ -318,6 +320,7 @@ async fn stt_transcription_sends_transcript_update() {
         tts: None,
         tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
+        rag: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -394,6 +397,7 @@ async fn trie_match_sends_skill_action() {
         tts: None,
         tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
+        rag: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -489,6 +493,7 @@ async fn llm_invoked_on_trie_no_match_sends_skill_action() {
         tts: None,
         tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
+        rag: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -592,6 +597,7 @@ async fn full_pipeline_pcm_to_tts_with_mocked_models() {
         tts: Some(tts),
         tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
+        rag: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -703,6 +709,7 @@ async fn tts_chunk_sent_after_skill_action() {
         tts: Some(tts),
         tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
+        rag: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
