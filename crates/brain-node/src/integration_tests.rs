@@ -551,6 +551,126 @@ async fn llm_invoked_on_trie_no_match_sends_skill_action() {
     }
 }
 
+/// Full pipeline with all three models mocked (CI-safe — no real Whisper/Ollama/Kokoro needed).
+///
+/// Data flow: PCM chunks → MockStt → trie NoMatch → MockLlm → SkillRegistry →
+///            MockTts → gRPC response stream.
+///
+/// Asserts the three-message sequence the edge node expects:
+///   1. TranscriptUpdate  — STT output
+///   2. SkillAction       — LLM-dispatched action (trie returned NoMatch)
+///   3. TtsChunk          — WAV bytes synthesised by TTS from the spoken reply
+#[tokio::test]
+async fn full_pipeline_pcm_to_tts_with_mocked_models() {
+    use crate::grpc::proto::brain_response;
+
+    // "what is two plus two" does not match any trie phrase → LLM path taken.
+    let stt: Arc<dyn SpeechToText> = Arc::new(MockStt {
+        text: "what is two plus two".to_string(),
+        confidence: 0.91,
+    });
+    let llm: Arc<dyn LlmClient> = Arc::new(MockLlm {
+        response: LlmResponse {
+            action: Some("respond".to_string()),
+            params: None,
+            response: "Four.".to_string(),
+        },
+    });
+    let tts: Arc<dyn TextToSpeech> = Arc::new(MockTts);
+
+    let registry = SessionRegistry::new();
+    let service = BrainService {
+        registry: registry.clone(),
+        certs_dir: std::path::PathBuf::from("/tmp"),
+        stt: Some(stt),
+        trie: Arc::new(aether_core::CommandTrie::default()),
+        llm: Some(llm),
+        tts: Some(tts),
+        skills: Arc::new(SkillRegistry::default()),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(
+        Server::builder()
+            .add_service(AetherBrainServer::new(service))
+            .serve_with_incoming(TcpListenerStream::new(listener)),
+    );
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    let channel = tonic::transport::Channel::from_shared(format!("http://{addr}"))
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<AudioChunk>(8);
+    let mut client = AetherBrainClient::new(channel);
+    let stream = ReceiverStream::new(rx);
+    let mut req = tonic::Request::new(stream);
+    req.metadata_mut()
+        .insert("x-node-id", "e2e-test-pi".parse().unwrap());
+
+    let resp = client.audio_stream(req).await.unwrap();
+    let mut resp_stream = resp.into_inner();
+
+    for seq in 0u64..3 {
+        tx.send(AudioChunk {
+            pcm: vec![0u8; 2048],
+            seq,
+        })
+        .await
+        .unwrap();
+    }
+    drop(tx);
+
+    // Message 1: TranscriptUpdate.
+    let first: BrainResponse = tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
+        .await
+        .expect("timed out waiting for TranscriptUpdate")
+        .expect("stream error")
+        .expect("stream closed before TranscriptUpdate");
+
+    match first.payload {
+        Some(brain_response::Payload::Transcript(t)) => {
+            assert_eq!(t.text, "what is two plus two");
+            assert!(t.is_final);
+            assert!((t.confidence - 0.91).abs() < 1e-5);
+        }
+        other => panic!("expected Transcript, got: {other:?}"),
+    }
+
+    // Message 2: SkillAction from LLM (trie returned NoMatch).
+    let second: BrainResponse =
+        tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
+            .await
+            .expect("timed out waiting for SkillAction from LLM")
+            .expect("stream error")
+            .expect("stream closed before LLM SkillAction");
+
+    match second.payload {
+        Some(brain_response::Payload::Action(a)) => {
+            assert_eq!(a.action, "respond", "LLM path should produce 'respond' action");
+        }
+        other => panic!("expected Action, got: {other:?}"),
+    }
+
+    // Message 3: TtsChunk with a valid WAV response from MockTts.
+    let third: BrainResponse = tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
+        .await
+        .expect("timed out waiting for TtsChunk")
+        .expect("stream error")
+        .expect("stream closed before TtsChunk");
+
+    match third.payload {
+        Some(brain_response::Payload::TtsAudio(chunk)) => {
+            assert!(chunk.wav.len() > 44, "WAV must be more than a header");
+            assert_eq!(&chunk.wav[0..4], b"RIFF", "TtsChunk should contain valid WAV");
+        }
+        other => panic!("expected TtsAudio, got: {other:?}"),
+    }
+}
+
 /// MockTts returns a valid WAV — verifies the brain sends a TtsChunk after the SkillAction.
 #[tokio::test]
 async fn tts_chunk_sent_after_skill_action() {
