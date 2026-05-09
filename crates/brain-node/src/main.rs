@@ -5,12 +5,14 @@ mod llm;
 mod mdns_adv;
 mod pair;
 mod session;
+mod skills;
 mod stt;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use grpc::{proto::aether_brain_server::AetherBrainServer, BrainService};
 use session::SessionRegistry;
+use skills::SkillRegistry;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -154,6 +156,7 @@ async fn serve(
         stt: stt_engine,
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: llm_engine,
+        skills: Arc::new(SkillRegistry::default()),
     };
 
     let _mdns = match local_ip {
@@ -185,6 +188,7 @@ async fn run_pair_server(port: u16, certs_dir: PathBuf) -> Result<()> {
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
+        skills: Arc::new(SkillRegistry::default()),
     };
 
     tracing::info!(%addr, "pairing server listening (plain gRPC)");

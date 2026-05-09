@@ -1,5 +1,6 @@
 use crate::llm::LlmClient;
 use crate::session::SessionRegistry;
+use crate::skills::SkillRegistry;
 use crate::stt::{bytes_to_f32le, SpeechToText};
 use aether_core::trie::{ClassifyResult, CommandTrie};
 use aether_core::NodeState;
@@ -23,6 +24,7 @@ pub struct BrainService {
     pub stt: Option<Arc<dyn SpeechToText>>,
     pub trie: Arc<CommandTrie>,
     pub llm: Option<Arc<dyn LlmClient>>,
+    pub skills: Arc<SkillRegistry>,
 }
 
 #[tonic::async_trait]
@@ -47,6 +49,7 @@ impl AetherBrain for BrainService {
         let stt = self.stt.clone();
         let trie = self.trie.clone();
         let llm = self.llm.clone();
+        let skills = self.skills.clone();
 
         registry.register(node_id.clone()).await;
         registry.set_state(&node_id, NodeState::Listening).await;
@@ -97,16 +100,24 @@ impl AetherBrain for BrainService {
 
                         match trie.classify(&t.text) {
                             ClassifyResult::Match(action) => {
+                                let action_str = action.as_str().to_string();
                                 tracing::info!(
                                     node_id = %nid2,
-                                    action = action.as_str(),
+                                    action = %action_str,
                                     "trie matched — dispatching directly"
+                                );
+                                let params = serde_json::Value::Object(Default::default());
+                                let skill_result = skills.dispatch(&action_str, &params);
+                                tracing::info!(
+                                    node_id = %nid2,
+                                    reply = %skill_result.spoken_reply,
+                                    "skill dispatched"
                                 );
                                 let _ = tx
                                     .send(Ok(BrainResponse {
                                         payload: Some(brain_response::Payload::Action(
                                             SkillAction {
-                                                action: action.as_str().to_string(),
+                                                action: action_str,
                                                 params_json: "{}".to_string(),
                                             },
                                         )),
@@ -128,10 +139,19 @@ impl AetherBrain for BrainService {
                                             let action_str = resp
                                                 .action
                                                 .unwrap_or_else(|| "respond".to_string());
-                                            let params_json = resp
-                                                .params
-                                                .map(|p| p.to_string())
-                                                .unwrap_or_else(|| "{}".to_string());
+                                            let mut params = resp.params.unwrap_or(
+                                                serde_json::Value::Object(Default::default()),
+                                            );
+                                            params["response"] =
+                                                serde_json::Value::String(resp.response);
+                                            let params_json = params.to_string();
+                                            let skill_result =
+                                                skills.dispatch(&action_str, &params);
+                                            tracing::info!(
+                                                node_id = %nid3,
+                                                reply = %skill_result.spoken_reply,
+                                                "skill dispatched"
+                                            );
                                             let _ = tx
                                                 .send(Ok(BrainResponse {
                                                     payload: Some(brain_response::Payload::Action(

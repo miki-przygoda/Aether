@@ -7,6 +7,7 @@ use crate::grpc::{
 };
 use crate::llm::LlmClient;
 use crate::session::SessionRegistry;
+use crate::skills::SkillRegistry;
 use crate::stt::{SpeechToText, TranscriptResult};
 use aether_core::LlmResponse;
 use std::sync::Arc;
@@ -25,6 +26,7 @@ async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
+        skills: Arc::new(SkillRegistry::default()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -174,6 +176,7 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
+        skills: Arc::new(SkillRegistry::default()),
     };
 
     let server_tls = ServerTlsConfig::new()
@@ -297,6 +300,7 @@ async fn stt_transcription_sends_transcript_update() {
         stt: Some(stt),
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
+        skills: Arc::new(SkillRegistry::default()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -370,6 +374,7 @@ async fn trie_match_sends_skill_action() {
         stt: Some(stt),
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
+        skills: Arc::new(SkillRegistry::default()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -462,6 +467,7 @@ async fn llm_invoked_on_trie_no_match_sends_skill_action() {
         stt: Some(stt),
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: Some(llm),
+        skills: Arc::new(SkillRegistry::default()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
