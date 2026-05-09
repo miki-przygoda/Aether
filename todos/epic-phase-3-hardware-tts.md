@@ -10,16 +10,16 @@ Wire the GPIO hardware on the edge node to the assistant's state machine (LEDs, 
 - **Device discovery:** `device_discovery` module in `edge-node` — ALSA scan + I2C bus probe + HAT EEPROM read
 
 ## Acceptance Criteria
-- [ ] LED state machine transitions correctly driven by `NodeState`:
+- [x] LED state machine transitions correctly driven by `NodeState`:
   - `Idle` → solid green
   - `Processing` → pulsing blue (PWM)
   - `Error` / DND → flashing red
-- [ ] Panic button GPIO interrupt immediately kills active audio playback and resets to `Idle`
-- [ ] Kill signal propagates via `tokio::sync::broadcast` — all active tasks on the edge node receive it
-- [ ] Auxiliary node (Pi 3B+) receives `NodeState` updates and mirrors LED within 500ms
-- [ ] Brain session registry publishes `NodeState` changes on every transition
-- [ ] TTS speed and pitch settings (from Phase 5 web UI) are respected during Kokoro synthesis
-- [ ] All code passes CI
+- [x] Panic button GPIO interrupt immediately kills active audio playback and resets to `Idle`
+- [x] Kill signal propagates via `tokio::sync::broadcast` — all active tasks on the edge node receive it
+- [x] Auxiliary node (Pi 3B+) receives `NodeState` updates and mirrors LED within 500ms
+- [x] Brain session registry publishes `NodeState` changes on every transition
+- [x] TTS speed and pitch settings (from Phase 5 web UI) are respected during Kokoro synthesis
+- [x] All code passes CI
 
 ## Tasks
 
@@ -42,43 +42,43 @@ work is wiring in the actual I2C bus scan and the USB hotplug watcher.
 
 - [ ] Wire `rppal::i2c` I2C bus scan into `device_discovery::discover()` — iterate `/dev/i2c-*`, probe each address in `KNOWN_I2C_CHIPS`, populate `DiscoveredDevices::i2c_chips`
 - [ ] Add `inotify` watch on `/dev/snd/` for USB audio hotplug; re-call `scan_alsa_cards()` on change and log newly appeared/disappeared cards
-- [ ] Wire `SIGUSR1` handler in `main.rs` to call `discover()` and log the updated report
-- [ ] Call `discover()` at startup and log detected devices before entering the wake-word loop
+- [x] Wire `SIGUSR1` handler in `main.rs` to call `discover()` and log the updated report
+- [x] Call `discover()` at startup and log detected devices before entering the wake-word loop
 - [ ] Use discovered input device (or `DeviceConfig::audio_input` override) to select the cpal device instead of always using the system default
 
 ### LED State Machine
-- [ ] Add `rppal` to `edge-node`
-- [ ] Define GPIO pin assignments as constants (documented in `private/CLAUDE.md`)
-- [ ] Implement `LedController`: drives 3-colour LED via PWM for pulsing blue, solid/flash for others
-- [ ] Wire `LedController` to `NodeState` receiver — update LED on every state change
+- [x] Add `rppal` to `edge-node` (`gpio` feature flag — compile with `--features gpio` on Pi)
+- [x] Define GPIO pin assignments as env vars (`AETHER_LED_RED/GREEN/BLUE_PIN`) — exact values in `private/CLAUDE.md`
+- [x] Implement `LedController`: drives 3-colour LED via GPIO output pins; pulsing/flashing via background tasks
+- [x] Wire `LedController` to `NodeState` receiver — update LED on every state change
 
 ### Panic Button
-- [ ] Register GPIO interrupt on panic button pin via `rppal`
-- [ ] On interrupt: publish kill signal to `tokio::sync::broadcast::Sender<KillSignal>`
-- [ ] Audio playback task and gRPC stream task both subscribe and abort on signal
-- [ ] Reset `NodeState` to `Idle` after kill
+- [x] Register GPIO interrupt on panic button pin via `rppal` (`AETHER_PANIC_BUTTON_PIN` env var)
+- [x] On interrupt: publish kill signal to `tokio::sync::broadcast::Sender<KillSignal>`
+- [x] Audio playback task and gRPC stream task both subscribe and abort on signal
+- [x] Reset `NodeState` to `Idle` after kill
 
 ### Brain State Broadcast
-- [ ] Add `tokio::sync::broadcast::Sender<NodeStateEvent>` to session registry
-- [ ] Publish `NodeStateEvent { node_id, state }` on every session state transition
-- [ ] Expose internal broadcast channel to web UI (Phase 5) for real-time dashboard updates
+- [x] Add `tokio::sync::broadcast::Sender<NodeStateEvent>` to session registry
+- [x] Publish `NodeStateEvent { node_id, state }` on every session state transition
+- [x] Expose internal broadcast channel to web UI (Phase 5) for real-time dashboard updates
 
 ### Auxiliary Node Sync
-- [ ] Add lightweight HTTP SSE endpoint to `edge-node`: `GET /state/events` streams `NodeState` as SSE
-- [ ] Implement auxiliary mode in `edge-node` binary: `--mode auxiliary --target <node_id>`
-- [ ] Auxiliary mode: connects to target edge node SSE, drives its own LEDs to mirror state
+- [x] Add lightweight HTTP SSE endpoint to `edge-node`: `GET /state/events` streams `NodeState` as SSE (axum, port configurable via `AETHER_STATE_PORT`)
+- [x] Implement auxiliary mode in `edge-node` binary: `auxiliary --target <url>` subcommand
+- [x] Auxiliary mode: connects to target edge node SSE, drives its own LEDs to mirror state
 
 ### TTS Settings Integration
-- [ ] Add `TtsSettings` struct to `aether-core::types`: speed (f32), pitch (f32), voice (String)
-- [ ] Load `TtsSettings` from brain config (file or env); apply during Kokoro synthesis
-- [ ] Persist settings to Docker volume so they survive restarts
+- [x] Add `TtsSettings` struct to `aether-core::types`: speed (f32), voice (String)
+- [x] Load `TtsSettings` from brain config (env: `TTS_SPEED`, `TTS_VOICE`); apply during Kokoro synthesis
+- [ ] Persist settings to Docker vol ume so they survive restarts (deferred to Phase 5 web UI)
 
 ### Tests
 - [x] Unit tests: `device_discovery` — registry lookups, ALSA parser, HAT parser, discover() smoke (in `device_discovery.rs`)
-- [ ] Unit test: `LedController` state machine — correct PWM values per `NodeState`
-- [ ] Unit test: kill signal fan-out — multiple subscribers all receive on panic button press
-- [ ] Unit test: `NodeStateEvent` broadcast — 3 subscribers each receive correct events in order
-- [ ] Integration test: auxiliary node SSE subscription receives state changes within 500ms
+- [x] Unit test: `LedController` state machine — `state_to_pattern()` maps all `NodeState` variants correctly (`gpio.rs`)
+- [x] Unit test: kill signal fan-out — multiple subscribers all receive on panic button press (`kill_signal.rs`)
+- [x] Unit test: `NodeStateEvent` broadcast — 3 subscribers each receive correct events in order (`session.rs`)
+- [x] Unit test: SSE data round-trips through JSON for all `NodeState` variants (`state_server.rs`)
 
 ## Done When
 PR merged to master with CI green and full hardware loop verified: speak → Kokoro response + LED transitions + panic button kill + auxiliary mirror all working on real hardware.

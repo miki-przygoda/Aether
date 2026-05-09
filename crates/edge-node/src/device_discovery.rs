@@ -61,6 +61,7 @@ pub struct I2cChipInfo {
 ///   2. Add entries here (one per distinct address possibility).
 ///   3. Add matching init logic in `audio.rs` (sample rate, channel count,
 ///      I2S clock polarity, etc.) keyed on `I2cChipInfo::name`.
+#[allow(dead_code)]
 pub const KNOWN_I2C_CHIPS: &[I2cChipInfo] = &[
     // ── Mic arrays ──────────────────────────────────────────────────────────
     I2cChipInfo {
@@ -114,6 +115,7 @@ pub const KNOWN_I2C_CHIPS: &[I2cChipInfo] = &[
 /// Look up a chip by its 7-bit I2C address.
 /// Returns the first match — for chips with multiple alt-address entries the
 /// primary (lowest address) is always listed first.
+#[allow(dead_code)]
 pub fn lookup_i2c_chip(addr: u8) -> Option<&'static I2cChipInfo> {
     KNOWN_I2C_CHIPS.iter().find(|c| c.addr == addr)
 }

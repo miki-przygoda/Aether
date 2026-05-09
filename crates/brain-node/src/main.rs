@@ -9,6 +9,7 @@ mod skills;
 mod stt;
 mod tts;
 
+use aether_core::TtsSettings;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use grpc::{proto::aether_brain_server::AetherBrainServer, BrainService};
@@ -65,6 +66,14 @@ enum Command {
         /// TTS is disabled if not set; expects vocab.json and voice_style.bin alongside.
         #[arg(long, env = "KOKORO_MODEL_PATH")]
         kokoro_model: Option<PathBuf>,
+
+        /// TTS playback speed (1.0 = normal, 0.8 = slower, 1.2 = faster).
+        #[arg(long, env = "TTS_SPEED", default_value = "1.0")]
+        tts_speed: f32,
+
+        /// TTS voice identifier (currently only "default" is supported).
+        #[arg(long, env = "TTS_VOICE", default_value = "default")]
+        tts_voice: String,
     },
 
     /// Pairing ceremony — plain (non-TLS) gRPC on a separate port.
@@ -113,6 +122,8 @@ async fn main() -> Result<()> {
             ollama_url,
             llm_model,
             kokoro_model,
+            tts_speed,
+            tts_voice,
         } => {
             serve(ServeArgs {
                 port,
@@ -123,6 +134,10 @@ async fn main() -> Result<()> {
                 ollama_url,
                 llm_model,
                 kokoro_model,
+                tts_settings: TtsSettings {
+                    speed: tts_speed,
+                    voice: tts_voice,
+                },
             })
             .await
         }
@@ -145,6 +160,7 @@ struct ServeArgs {
     ollama_url: String,
     llm_model: String,
     kokoro_model: Option<PathBuf>,
+    tts_settings: TtsSettings,
 }
 
 async fn serve(args: ServeArgs) -> Result<()> {
@@ -157,6 +173,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         ollama_url,
         llm_model,
         kokoro_model,
+        tts_settings,
     } = args;
     let local_ip = local_ip_address::local_ip().context("detecting local IP")?;
     tracing::info!(ip = %local_ip, "brain local address");
@@ -218,6 +235,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: llm_engine,
         tts: tts_engine,
+        tts_settings,
         skills: Arc::new(SkillRegistry::default()),
     };
 
@@ -292,6 +310,7 @@ async fn run_pair_server(port: u16, certs_dir: PathBuf) -> Result<()> {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
         tts: None,
+        tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
     };
 
