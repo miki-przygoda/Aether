@@ -10,7 +10,7 @@ use crate::session::SessionRegistry;
 use crate::skills::SkillRegistry;
 use crate::stt::{SpeechToText, TranscriptResult};
 use crate::tts::{encode_wav, TextToSpeech};
-use aether_core::LlmResponse;
+use aether_core::{LlmResponse, TtsSettings};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
@@ -28,6 +28,7 @@ async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
         tts: None,
+        tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
     };
 
@@ -93,8 +94,7 @@ impl LlmClient for MockLlm {
 struct MockTts;
 
 impl TextToSpeech for MockTts {
-    fn synthesise(&self, _text: &str) -> anyhow::Result<Vec<u8>> {
-        // Return a minimal valid WAV (silence, 100 samples at 24 kHz).
+    fn synthesise(&self, _text: &str, _settings: &TtsSettings) -> anyhow::Result<Vec<u8>> {
         encode_wav(&vec![0.0f32; 100], 24_000)
     }
 }
@@ -190,6 +190,7 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
         tts: None,
+        tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
     };
 
@@ -315,6 +316,7 @@ async fn stt_transcription_sends_transcript_update() {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
         tts: None,
+        tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
     };
 
@@ -390,6 +392,7 @@ async fn trie_match_sends_skill_action() {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
         tts: None,
+        tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
     };
 
@@ -484,6 +487,7 @@ async fn llm_invoked_on_trie_no_match_sends_skill_action() {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: Some(llm),
         tts: None,
+        tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
     };
 
@@ -586,6 +590,7 @@ async fn full_pipeline_pcm_to_tts_with_mocked_models() {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: Some(llm),
         tts: Some(tts),
+        tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
     };
 
@@ -696,6 +701,7 @@ async fn tts_chunk_sent_after_skill_action() {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
         tts: Some(tts),
+        tts_settings: TtsSettings::default(),
         skills: Arc::new(SkillRegistry::default()),
     };
 

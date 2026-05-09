@@ -1,3 +1,4 @@
+use aether_core::TtsSettings;
 use anyhow::{Context, Result};
 use ort::{session::builder::GraphOptimizationLevel, session::Session, value::Tensor};
 use std::collections::HashMap;
@@ -5,8 +6,8 @@ use std::io::Cursor;
 
 /// Abstraction over TTS backends — allows mock injection in tests.
 pub trait TextToSpeech: Send + Sync {
-    /// Synthesise `text` and return WAV bytes (24 kHz, mono, 16-bit PCM).
-    fn synthesise(&self, text: &str) -> Result<Vec<u8>>;
+    /// Synthesise `text` with the given settings and return WAV bytes (24 kHz, mono, 16-bit PCM).
+    fn synthesise(&self, text: &str, settings: &TtsSettings) -> Result<Vec<u8>>;
 }
 
 // ─── Kokoro-82M ONNX ─────────────────────────────────────────────────────────
@@ -112,8 +113,8 @@ impl KokoroTts {
 }
 
 impl TextToSpeech for KokoroTts {
-    fn synthesise(&self, text: &str) -> Result<Vec<u8>> {
-        self.synthesise_at_speed(text, 1.0)
+    fn synthesise(&self, text: &str, settings: &TtsSettings) -> Result<Vec<u8>> {
+        self.synthesise_at_speed(text, settings.speed)
     }
 }
 
@@ -208,7 +209,9 @@ mod tests {
     fn live_kokoro_synthesises_non_empty_wav() {
         let path = std::env::var("KOKORO_MODEL_PATH").expect("KOKORO_MODEL_PATH must be set");
         let tts = KokoroTts::new(&path).unwrap();
-        let wav = tts.synthesise("hello world").unwrap();
+        let wav = tts
+            .synthesise("hello world", &TtsSettings::default())
+            .unwrap();
         assert!(wav.len() > 44, "WAV should have more than just a header");
         assert_eq!(&wav[0..4], b"RIFF");
     }

@@ -4,7 +4,7 @@ use crate::skills::SkillRegistry;
 use crate::stt::{bytes_to_f32le, SpeechToText};
 use crate::tts::TextToSpeech;
 use aether_core::trie::{ClassifyResult, CommandTrie};
-use aether_core::NodeState;
+use aether_core::{NodeState, TtsSettings};
 use std::sync::Arc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
@@ -26,6 +26,7 @@ pub struct BrainService {
     pub trie: Arc<CommandTrie>,
     pub llm: Option<Arc<dyn LlmClient>>,
     pub tts: Option<Arc<dyn TextToSpeech>>,
+    pub tts_settings: TtsSettings,
     pub skills: Arc<SkillRegistry>,
 }
 
@@ -52,6 +53,7 @@ impl AetherBrain for BrainService {
         let trie = self.trie.clone();
         let llm = self.llm.clone();
         let tts = self.tts.clone();
+        let tts_settings = self.tts_settings.clone();
         let skills = self.skills.clone();
 
         registry.register(node_id.clone()).await;
@@ -141,7 +143,14 @@ impl AetherBrain for BrainService {
                                         )),
                                     }))
                                     .await;
-                                synthesise_and_send(&tx, tts.clone(), &spoken_reply, &nid2).await;
+                                synthesise_and_send(
+                                    &tx,
+                                    tts.clone(),
+                                    &spoken_reply,
+                                    &nid2,
+                                    &tts_settings,
+                                )
+                                .await;
                             }
                             _ => {
                                 if let Some(llm) = llm {
@@ -181,6 +190,7 @@ impl AetherBrain for BrainService {
                                                 tts.clone(),
                                                 &spoken_reply,
                                                 &nid3,
+                                                &tts_settings,
                                             )
                                             .await;
                                         }
@@ -254,11 +264,13 @@ async fn synthesise_and_send(
     tts: Option<Arc<dyn TextToSpeech>>,
     text: &str,
     node_id: &str,
+    settings: &TtsSettings,
 ) {
     let Some(tts) = tts else { return };
     let text = text.to_string();
     let nid = node_id.to_string();
-    match tokio::task::spawn_blocking(move || tts.synthesise(&text)).await {
+    let settings = settings.clone();
+    match tokio::task::spawn_blocking(move || tts.synthesise(&text, &settings)).await {
         Ok(Ok(wav)) => {
             tracing::info!(node_id = %nid, bytes = wav.len(), "TTS chunk ready");
             let _ = tx
