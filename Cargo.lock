@@ -857,6 +857,7 @@ dependencies = [
  "clap",
  "cpal",
  "dirs",
+ "hound",
  "mdns-sd",
  "prost",
  "rustpotter",

@@ -4,6 +4,7 @@ mod brain_conn;
 mod device_discovery;
 #[cfg(test)]
 mod integration_tests;
+mod playback;
 mod wake_word;
 
 use anyhow::{Context, Result};
