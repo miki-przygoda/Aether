@@ -14,12 +14,55 @@ pub struct SkillRegistry {
     fallback: Arc<dyn Skill>,
 }
 
+/// Information about a registered skill, used by the web UI skills page.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SkillInfo {
+    pub action: String,
+    pub description: String,
+    pub example_phrases: Vec<String>,
+}
+
 impl SkillRegistry {
     pub fn dispatch(&self, action: &str, params: &serde_json::Value) -> SkillResult {
         self.skills
             .get(action)
             .unwrap_or(&self.fallback)
             .handle(params)
+    }
+
+    /// Return metadata for all registered skills, sorted by action name.
+    /// Used by the web UI skills page and the skill-tester API.
+    pub fn list(&self) -> Vec<SkillInfo> {
+        static DESCRIPTIONS: &[(&str, &str, &[&str])] = &[
+            ("lights_off", "Turn off the lights", &["lights off", "turn off the lights"]),
+            ("lights_on", "Turn on the lights", &["lights on", "turn on the lights"]),
+            ("pause_music", "Pause music playback", &["pause", "pause music"]),
+            ("play_music", "Start music playback", &["play music", "play something"]),
+            ("respond", "General conversation / fallback", &["what time is it?", "tell me a joke"]),
+            ("set_timer", "Set a countdown timer", &["set a timer for 5 minutes", "timer 30 seconds"]),
+            ("stop_music", "Stop music playback", &["stop music", "stop"]),
+            ("volume_down", "Decrease the volume", &["volume down", "quieter"]),
+            ("volume_up", "Increase the volume", &["volume up", "louder"]),
+            ("weather", "Report the current weather", &["what's the weather?", "is it raining?"]),
+        ];
+        let mut infos: Vec<SkillInfo> = self
+            .skills
+            .keys()
+            .map(|action| {
+                let (desc, phrases) = DESCRIPTIONS
+                    .iter()
+                    .find(|(a, _, _)| *a == action.as_str())
+                    .map(|(_, d, p)| (*d, p.iter().map(|s| s.to_string()).collect::<Vec<_>>()))
+                    .unwrap_or(("No description", vec![]));
+                SkillInfo {
+                    action: action.clone(),
+                    description: desc.to_string(),
+                    example_phrases: phrases,
+                }
+            })
+            .collect();
+        infos.sort_by(|a, b| a.action.cmp(&b.action));
+        infos
     }
 }
 
