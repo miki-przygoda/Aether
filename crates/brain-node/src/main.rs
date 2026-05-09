@@ -11,16 +11,18 @@ mod skills;
 mod stt;
 mod tts;
 mod vector_store;
+mod web_ui;
 
 use aether_core::TtsSettings;
 use anyhow::{Context, Result};
+use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use grpc::{proto::aether_brain_server::AetherBrainServer, BrainService};
 use session::SessionRegistry;
 use skills::SkillRegistry;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::Arc;
+use tokio::sync::RwLock;
 use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 
 #[derive(Parser)]
@@ -31,11 +33,16 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Run the mTLS gRPC server and advertise via mDNS.
     Serve {
         #[arg(long, env = "BRAIN_GRPC_PORT", default_value = "50051")]
         port: u16,
+
+        /// Port for the web configuration UI (HTTP, unencrypted — local network only).
+        #[arg(long, env = "BRAIN_WEB_PORT", default_value = "8080")]
+        web_port: u16,
 
         #[arg(long, env = "BRAIN_CERTS_DIR", default_value = "/data/certs")]
         certs_dir: PathBuf,
@@ -94,6 +101,15 @@ enum Command {
         /// Accepts .txt and .md files. Skipped if QDRANT_URL is not set.
         #[arg(long, env = "DOCUMENTS_DIR")]
         documents_dir: Option<PathBuf>,
+
+        /// Writable directory for web UI state persistence (TTS settings, wake word samples, etc.).
+        #[arg(long, env = "BRAIN_CONFIG_DIR", default_value = "/data/config")]
+        config_dir: PathBuf,
+
+        /// Base URL of the voice fine-tuning Python service.
+        /// Voice personalisation is disabled when not set.
+        #[arg(long, env = "FINETUNING_URL")]
+        finetuning_url: Option<String>,
     },
 
     /// Pairing ceremony — plain (non-TLS) gRPC on a separate port.
@@ -135,6 +151,7 @@ async fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Serve {
             port,
+            web_port,
             certs_dir,
             whisper_model,
             whisper_fallback,
@@ -148,9 +165,12 @@ async fn main() -> Result<()> {
             embed_model,
             history_turns,
             documents_dir,
+            config_dir,
+            finetuning_url,
         } => {
             serve(ServeArgs {
                 port,
+                web_port,
                 certs_dir,
                 whisper_model,
                 whisper_fallback,
@@ -166,6 +186,8 @@ async fn main() -> Result<()> {
                 embed_model,
                 history_turns,
                 documents_dir,
+                config_dir,
+                finetuning_url,
             })
             .await
         }
@@ -181,6 +203,7 @@ async fn main() -> Result<()> {
 
 struct ServeArgs {
     port: u16,
+    web_port: u16,
     certs_dir: PathBuf,
     whisper_model: Option<PathBuf>,
     whisper_fallback: Option<PathBuf>,
@@ -193,11 +216,14 @@ struct ServeArgs {
     embed_model: String,
     history_turns: usize,
     documents_dir: Option<PathBuf>,
+    config_dir: PathBuf,
+    finetuning_url: Option<String>,
 }
 
 async fn serve(args: ServeArgs) -> Result<()> {
     let ServeArgs {
         port,
+        web_port,
         certs_dir,
         whisper_model,
         whisper_fallback,
@@ -210,7 +236,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
         embed_model,
         history_turns,
         documents_dir,
+        config_dir,
+        finetuning_url,
     } = args;
+    std::fs::create_dir_all(&config_dir).context("creating config dir")?;
     let local_ip = local_ip_address::local_ip().context("detecting local IP")?;
     tracing::info!(ip = %local_ip, "brain local address");
 
@@ -248,6 +277,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     tracing::info!(url = %ollama_url, model = %llm_model, "configuring Ollama LLM client");
     let embed_url = ollama_url.clone();
+    let ollama_url_for_ui = ollama_url.clone();
     let llm_engine: Option<Arc<dyn llm::LlmClient>> = Some(Arc::new(
         llm::OllamaClient::new(ollama_url, llm_model).context("creating Ollama client")?,
     ));
@@ -302,16 +332,36 @@ async fn serve(args: ServeArgs) -> Result<()> {
         None
     };
 
+    let tts_settings = Arc::new(RwLock::new(tts_settings));
+    let registry = SessionRegistry::new();
+    let trie = Arc::new(aether_core::CommandTrie::default());
+    let skills = Arc::new(SkillRegistry::default());
+
+    let web_state = web_ui::AppState::new(
+        registry.clone(),
+        skills.clone(),
+        tts_engine.clone(),
+        tts_settings.clone(),
+        llm_engine.clone(),
+        trie.clone(),
+        rag_config.clone(),
+        certs_dir.clone(),
+        config_dir,
+        documents_dir,
+        ollama_url_for_ui,
+        finetuning_url,
+    );
+
     let addr: SocketAddr = ([0, 0, 0, 0], port).into();
     let service = BrainService {
-        registry: SessionRegistry::new(),
+        registry,
         certs_dir,
         stt: stt_engine,
-        trie: Arc::new(aether_core::CommandTrie::default()),
+        trie,
         llm: llm_engine,
         tts: tts_engine,
         tts_settings,
-        skills: Arc::new(SkillRegistry::default()),
+        skills,
         rag: rag_config,
     };
 
@@ -322,6 +372,19 @@ async fn serve(args: ServeArgs) -> Result<()> {
             None
         }
     };
+
+    // ── Web UI HTTP server ────────────────────────────────────────────────────
+    let web_addr: SocketAddr = ([0, 0, 0, 0], web_port).into();
+    let web_router = web_ui::make_router(web_state);
+    tokio::spawn(async move {
+        tracing::info!(%web_addr, "web UI server starting (HTTP)");
+        let listener = tokio::net::TcpListener::bind(web_addr)
+            .await
+            .expect("binding web UI port");
+        axum::serve(listener, web_router)
+            .await
+            .expect("web UI server error");
+    });
 
     tracing::info!(%addr, "brain gRPC server starting (mTLS)");
     Server::builder()
@@ -386,7 +449,7 @@ async fn run_pair_server(port: u16, certs_dir: PathBuf) -> Result<()> {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
         tts: None,
-        tts_settings: TtsSettings::default(),
+        tts_settings: Arc::new(RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
     };
