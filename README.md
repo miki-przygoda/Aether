@@ -25,8 +25,8 @@ Commercial smart speakers trade convenience for privacy. Aether takes a differen
                                       │  │  + Web   │  └─────────┘           │
   Browser ───── HTTP :8080 ─────────► │  │  UI      │  ┌─────────┐           │
   (local LAN)                         │  └──────────┘  │ qdrant  │           │
-                                      │                 │  RAG    │           │
-                                      │                 └─────────┘           │
+                                      │                │  RAG    │           │
+                                      │                └─────────┘           │
                                       └──────────────────────────────────────┘
 ```
 
@@ -54,23 +54,23 @@ Aether/
 
 ## Tech Stack
 
-| Layer                  | Technology                                      |
-|:-----------------------|:------------------------------------------------|
-| **Language**           | Rust (edition 2021, async via Tokio)            |
-| **Audio I/O**          | `cpal` (ALSA / CoreAudio)                       |
-| **Wake Word**          | `rustpotter` — pure Rust, trainable on your voice |
-| **Discovery**          | `mdns-sd` (zero-config local network)           |
-| **Networking**         | `tonic` (gRPC) over mTLS                        |
-| **TLS**                | `rustls` + `rcgen` (self-hosted CA)             |
-| **STT**                | Whisper.cpp via `whisper-rs`                    |
-| **LLM**                | Ollama (Llama 3.2 3B)                           |
-| **TTS**                | Kokoro-82M via `ort` (ONNX Runtime)             |
-| **Memory / RAG**       | Qdrant (local vector DB, Docker Compose service)|
-| **Embeddings**         | `nomic-embed-text` via Ollama                   |
-| **Web UI**             | Axum + MiniJinja (server-rendered, SSE)         |
-| **GPIO / Hardware**    | `rppal` (I2C, PWM, GPIO)                        |
-| **Brain Deployment**   | Docker Compose (CPU default, GPU opt-in)        |
-| **Cross-compilation**  | `cross-rs`                                      |
+| Layer                 | Technology                                        |
+|:----------------------|:--------------------------------------------------|
+| **Language**          | Rust (edition 2021, async via Tokio)              |
+| **Audio I/O**         | `cpal` (ALSA / CoreAudio)                         |
+| **Wake Word**         | `rustpotter` — pure Rust, trainable on your voice |
+| **Discovery**         | `mdns-sd` (zero-config local network)             |
+| **Networking**        | `tonic` (gRPC) over mTLS                          |
+| **TLS**               | `rustls` + `rcgen` (self-hosted CA)               |
+| **STT**               | Whisper.cpp via `whisper-rs`                      |
+| **LLM**               | Ollama (Llama 3.2 3B)                             |
+| **TTS**               | Kokoro-82M via `ort` (ONNX Runtime)               |
+| **Memory / RAG**      | Qdrant (local vector DB, Docker Compose service)  |
+| **Embeddings**        | `nomic-embed-text` via Ollama                     |
+| **Web UI**            | Axum + MiniJinja (server-rendered, SSE)           |
+| **GPIO / Hardware**   | `rppal` (I2C, PWM, GPIO)                          |
+| **Brain Deployment**  | Docker Compose (CPU default, GPU opt-in)          |
+| **Cross-compilation** | `cross-rs`                                        |
 
 ---
 
@@ -145,16 +145,16 @@ No config files, no IP addresses stored manually, no accounts.
 
 The brain node serves a self-hosted configuration interface at `http://<brain-host>:8080/ui/`.
 
-| Page | Description |
-|:-----|:------------|
-| **Dashboard** | Live node status via SSE — connection state updates in real time without a page refresh |
-| **Nodes** | Manage paired edge nodes; run the pairing wizard to add new ones |
-| **Wake Word Training** | Record samples in-browser, train a custom model, deploy to nodes (hot-reload) |
-| **Voice Personalisation** | Record prompts per user and fine-tune Whisper on your voice |
-| **TTS Settings** | Adjust voice, speed, and pitch; play a preview in-browser |
-| **Model Settings** | Configure Whisper mode, LLM routing, pull/remove Ollama models |
-| **Skills** | Browse registered skills and test any query against the skill router |
-| **Documents** | Upload documents and trigger Qdrant ingestion with live progress |
+| Page                      | Description                                                                             |
+|:--------------------------|:----------------------------------------------------------------------------------------|
+| **Dashboard**             | Live node status via SSE — connection state updates in real time without a page refresh |
+| **Nodes**                 | Manage paired edge nodes; run the pairing wizard to add new ones                        |
+| **Wake Word Training**    | Record samples in-browser, train a custom model, deploy to nodes (hot-reload)           |
+| **Voice Personalisation** | Record prompts per user and fine-tune Whisper on your voice                             |
+| **TTS Settings**          | Adjust voice, speed, and pitch; play a preview in-browser                               |
+| **Model Settings**        | Configure Whisper mode, LLM routing, pull/remove Ollama models                          |
+| **Skills**                | Browse registered skills and test any query against the skill router                    |
+| **Documents**             | Upload documents and trigger Qdrant ingestion with live progress                        |
 
 ---
 
@@ -162,13 +162,13 @@ The brain node serves a self-hosted configuration interface at `http://<brain-ho
 
 All five phases are shipped. The system is fully functional end-to-end.
 
-| Phase | Description | Status |
-|:------|:------------|:-------|
-| **1 — Audio Pipe & Secure Transport** | `cpal` capture, rustpotter wake word, mDNS discovery, mTLS pairing, gRPC streaming | ✅ Shipped |
-| **2 — Neural Engine** | Docker Compose brain stack, Whisper STT, Ollama LLM, Kokoro TTS, skill router | ✅ Shipped |
-| **3 — Hardware Feedback** | GPIO LEDs, panic button, auxiliary node state mirroring | ✅ Shipped |
-| **4 — Memory & RAG** | Qdrant vector DB, document ingestion, RAG-grounded answers, conversation history | ✅ Shipped |
-| **5 — Web Configuration UI** | Self-hosted Axum UI, wake word training wizard, voice personalisation, TTS/model settings | ✅ Shipped |
+| Phase                                 | Description                                                                               | Status    |
+|:--------------------------------------|:------------------------------------------------------------------------------------------|:----------|
+| **1 — Audio Pipe & Secure Transport** | `cpal` capture, rustpotter wake word, mDNS discovery, mTLS pairing, gRPC streaming        | ✅ Shipped |
+| **2 — Neural Engine**                 | Docker Compose brain stack, Whisper STT, Ollama LLM, Kokoro TTS, skill router             | ✅ Shipped |
+| **3 — Hardware Feedback**             | GPIO LEDs, panic button, auxiliary node state mirroring                                   | ✅ Shipped |
+| **4 — Memory & RAG**                  | Qdrant vector DB, document ingestion, RAG-grounded answers, conversation history          | ✅ Shipped |
+| **5 — Web Configuration UI**          | Self-hosted Axum UI, wake word training wizard, voice personalisation, TTS/model settings | ✅ Shipped |
 
 ---
 

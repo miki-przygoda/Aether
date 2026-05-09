@@ -18,7 +18,7 @@ services:
       BRAIN_CERTS_DIR: /data/certs
       BRAIN_CONFIG_DIR: /data/config
       WHISPER_MODEL_PATH: /models/whisper/ggml-medium.bin
-      WHISPER_FALLBACK_MODEL_PATH: /models/whisper/distil-large-v3.bin
+      WHISPER_FALLBACK_MODEL_PATH: /models/whisper/large-v3-turbo.bin
       WHISPER_CONFIDENCE_THRESHOLD: "0.75"
       KOKORO_MODEL_PATH: /models/tts/kokoro-82m.onnx
       OLLAMA_BASE_URL: http://ollama:11434
