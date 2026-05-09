@@ -35,10 +35,10 @@ Establish the full audio path from microphone capture on the edge node to raw PC
 ## Tasks
 
 ### Baseline Wake Word Model
-- [ ] Generate synthetic "Hey Aether" samples via Kokoro TTS across all available voices
-- [ ] Supplement with real samples from developer + family/friends (varied accents, environments)
-- [ ] Train baseline rustpotter model and commit to `models/wake-word/hey-aether-baseline.rpw`
-- [ ] Document the training process so users can retrain with their own voice
+- [x] Generate synthetic "Hey Aether" samples via Kokoro TTS — `brain-node generate-wake-word-samples` subcommand; 5 speeds × N samples per run; outputs to `models/wake-word/samples/synthetic/`
+- [ ] Supplement with real samples from developer + family/friends (varied accents, environments) — *requires manual recordings*
+- [ ] Train baseline rustpotter model and commit to `models/wake-word/hey-aether-baseline.rpw` — *requires real samples + running `scripts/train-wake-word.sh`*
+- [x] Document the training process — `docs/wake-word-training.md`; covers synthetic generation, real recording, training, threshold tuning, and Pi deployment
 
 ### Edge Node
 - [x] Add `cpal` to `edge-node`; capture mic input into a ring buffer (512-sample, 16kHz mono)
