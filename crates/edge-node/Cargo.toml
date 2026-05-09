@@ -12,11 +12,14 @@ path = "src/main.rs"
 # rustpotter 3.0.2 has a broken upstream dep (candle-core 0.2.2 + half 2.7 + rand conflict).
 # Build with `--features wake-word` for production Pi builds once upstream is fixed.
 wake-word = ["dep:rustpotter"]
+# Enables real GPIO hardware (rppal) for LED control and panic button.
+# Only compile with this feature on Raspberry Pi Linux targets.
+gpio = ["dep:rppal"]
 
 [dependencies]
 aether-core = { path = "../aether-core" }
 tokio = { version = "1", features = ["full"] }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["sync"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 anyhow = "1"
@@ -30,7 +33,10 @@ serde_json = "1"
 hound = "3"
 dirs = "5"
 async-stream = "0.3"
+axum = "0.7"
+reqwest = { version = "0.12", features = ["stream"] }
 rustpotter = { version = "3", optional = true }
+rppal = { version = "0.18", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
