@@ -81,7 +81,7 @@ Deploy the brain as a Docker Compose stack and wire the incoming PCM stream thro
 - [x] Unit tests: 16 trie classify tests (match / partial / no-match / punctuation / case)
 - [x] Unit test: LLM JSON schema validation (fast-tier output always valid `LlmResponse`)
 - [x] Unit test: skill router dispatch — correct skill selected for each action string
-- [ ] Integration test: PCM in → Whisper → Ollama → WAV stream out (end-to-end, mocked models for CI)
+- [x] Integration test: PCM in → Whisper → Ollama → WAV stream out (end-to-end, mocked models for CI)
 
 ## Done When
 PR merged to master with CI green and a real voice query processed end-to-end via `docker compose up` — heard as a Kokoro voice response on the Pi.
