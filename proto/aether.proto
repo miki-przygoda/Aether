@@ -23,10 +23,17 @@ message AudioChunk {
 // Only one payload field is set per message; the others are absent.
 message BrainResponse {
   oneof payload {
-    TranscriptUpdate transcript = 1; // partial or final STT result  (Phase 2+)
-    TtsChunk         tts_audio  = 2; // synthesised speech chunk     (Phase 2+)
-    SkillAction      action     = 3; // structured skill dispatch     (Phase 2+)
+    TranscriptUpdate    transcript      = 1; // partial or final STT result   (Phase 2+)
+    TtsChunk            tts_audio       = 2; // synthesised speech chunk       (Phase 2+)
+    SkillAction         action          = 3; // structured skill dispatch      (Phase 2+)
+    WakeWordModelUpdate wake_word_model = 4; // hot-reload wake word model     (Phase 5+)
   }
+}
+
+// Pushed by the brain when a new wake word model is deployed.
+// The edge node writes the bytes to AETHER_MODEL_PATH and hot-reloads.
+message WakeWordModelUpdate {
+  bytes model_bytes = 1; // raw .rpw rustpotter model file
 }
 
 message TranscriptUpdate {

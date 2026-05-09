@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Documents — Aether{% endblock %}
+{% block heading %}Documents{% endblock %}
+
+{% block content %}
+{% if not qdrant_configured %}
+<div class="alert alert-warn">Qdrant is not configured. Set QDRANT_URL to enable document indexing.</div>
+{% endif %}
+
+<div class="toolbar" style="margin-bottom:1rem">
+  <label class="btn" style="cursor:pointer">
+    Upload file <input id="upload-input" type="file" accept=".txt,.md" multiple style="display:none">
+  </label>
+  <button class="btn btn-secondary" onclick="reindexAll()" id="reindex-btn">Re-index all</button>
+</div>
+
+<div id="progress-bar" style="display:none;margin-bottom:1rem">
+  <div class="progress"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+  <p id="progress-label" style="font-size:.85rem;color:var(--muted)"></p>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>File</th><th>Size</th><th>Status</th></tr></thead>
+    <tbody id="doc-table">
+      {% for doc in documents %}
+      <tr>
+        <td>{{ doc.name }}</td>
+        <td>{{ doc.size_kb }} KB</td>
+        <td><span class="badge badge-{{ doc.status }}">{{ doc.status }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="empty">No documents. Upload .txt or .md files above.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if node_ids %}
+<div class="card" style="margin-top:2rem">
+  <h2>Clear Conversation History</h2>
+  <p>Permanently delete all stored conversation turns for a node.</p>
+  <div class="toolbar">
+    <select id="history-node-select">
+      {% for nid in node_ids %}<option value="{{ nid }}">{{ nid }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-danger" onclick="clearHistory()">Clear history</button>
+  </div>
+</div>
+{% endif %}
+
+<script>
+document.getElementById('upload-input').addEventListener('change', async function() {
+  const files = this.files;
+  if (!files.length) return;
+  const form = new FormData();
+  for (const f of files) form.append('file', f);
+  const resp = await fetch('/api/documents', { method: 'POST', body: form });
+  if (resp.ok) location.reload();
+  else alert('Upload failed: ' + resp.statusText);
+});
+
+function reindexAll() {
+  const bar = document.getElementById('progress-bar');
+  const fill = document.getElementById('progress-fill');
+  const label = document.getElementById('progress-label');
+  bar.style.display = 'block';
+
+  fetch('/api/documents/ingest', { method: 'POST' });
+
+  const es = new EventSource('/events/documents/ingest');
+  es.onmessage = function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      fill.style.width = data.percent + '%';
+      label.textContent = data.message;
+      if (data.done) { es.close(); setTimeout(() => location.reload(), 1000); }
+    } catch (_) {}
+  };
+}
+
+function clearHistory() {
+  const nodeId = document.getElementById('history-node-select').value;
+  if (!confirm('Clear all history for ' + nodeId + '?')) return;
+  fetch('/api/history/' + encodeURIComponent(nodeId), { method: 'DELETE' })
+    .then(() => alert('History cleared.'));
+}
+</script>
+{% endblock %}

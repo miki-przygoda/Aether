@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Pair Node — Aether{% endblock %}
+{% block heading %}Pair a Node{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:520px">
+  <p>Enter the node ID shown on the edge device during <code>edge-node pair</code>, then click Approve.</p>
+  <p>The brain will issue a client certificate the edge can use for mTLS connections.</p>
+
+  <form id="pair-form" style="margin-top:1.5rem">
+    <label class="field">
+      <span>Node ID</span>
+      <input id="node-id-input" type="text" placeholder="e.g. office-pi" required>
+    </label>
+    <button type="submit" class="btn" style="margin-top:1rem">Approve &amp; Issue Cert</button>
+  </form>
+
+  <div id="pair-result" style="display:none;margin-top:1.5rem"></div>
+</div>
+
+<script>
+document.getElementById('pair-form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const nodeId = document.getElementById('node-id-input').value.trim();
+  const resultEl = document.getElementById('pair-result');
+  resultEl.style.display = 'none';
+
+  try {
+    const resp = await fetch('/api/nodes/pair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ node_id: nodeId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      resultEl.innerHTML = '<div class="alert alert-error">Error: ' + (data.error || resp.statusText) + '</div>';
+    } else {
+      resultEl.innerHTML = '<div class="alert alert-success">Cert issued for <strong>' + data.node_id + '</strong>. Copy the edge-node config.json now.</div>';
+    }
+    resultEl.style.display = 'block';
+  } catch (err) {
+    resultEl.innerHTML = '<div class="alert alert-error">' + err + '</div>';
+    resultEl.style.display = 'block';
+  }
+});
+</script>
+{% endblock %}

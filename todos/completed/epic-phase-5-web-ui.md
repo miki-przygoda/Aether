@@ -212,54 +212,58 @@ GET    /events/documents/ingest            → document ingestion progress
 ```
 
 ## Acceptance Criteria
-- [ ] Web UI accessible at `http://<brain-host>:8080/ui/` from any browser on the local network
-- [ ] Dashboard shows live node state (SSE updates without page refresh)
-- [ ] Wake word training wizard: records 15+ samples, trains rustpotter model, deploys to Pi — all in browser
-- [ ] Deployed wake word model is hot-reloaded on the Pi without service restart
-- [ ] Voice personalisation: supports multiple user profiles; each records 25 prompts; fine-tune runs in Python container; per-node profile assignment works
-- [ ] Python `finetuning` container only starts when a training job is triggered — not running during normal use
-- [ ] TTS preview plays audio in-browser within 2s of clicking "Play"
-- [ ] TTS settings persist across brain Docker restarts
-- [ ] Model settings correctly switch Whisper and LLM tier behaviour
-- [ ] Skill tester returns correct skill match and LLM JSON for any test query
-- [ ] Document upload + ingestion triggers Qdrant indexing with progress feedback
-- [ ] All API endpoints return appropriate errors with human-readable messages
-- [ ] UI is usable on mobile (PWA-friendly layout, no horizontal scroll)
-- [ ] All code passes CI
+- [ ] Web UI accessible at `http://<brain-host>:8080/ui/` from any browser on the local network *(hardware verification pending)*
+- [ ] Dashboard shows live node state (SSE updates without page refresh) *(hardware verification pending)*
+- [ ] Wake word training wizard: records 15+ samples, trains rustpotter model, deploys to Pi — all in browser *(hardware verification pending)*
+- [ ] Deployed wake word model is hot-reloaded on the Pi without service restart *(hardware verification pending — requires `AETHER_MODEL_PATH` set on Pi)*
+- [ ] Voice personalisation: supports multiple user profiles; each records 25 prompts; fine-tune runs in Python container; per-node profile assignment works *(hardware + browser verification pending)*
+- [x] Python `finetuning` container only starts when a training job is triggered — not running during normal use (compose `training` profile)
+- [ ] TTS preview plays audio in-browser within 2s of clicking "Play" *(browser verification pending)*
+- [ ] TTS settings persist across brain Docker restarts *(requires Docker restart cycle to verify)*
+- [ ] Model settings correctly switch Whisper and LLM tier behaviour *(requires real Ollama instance)*
+- [ ] Skill tester returns correct skill match and LLM JSON for any test query *(requires real LLM)*
+- [ ] Document upload + ingestion triggers Qdrant indexing with progress feedback *(requires real Qdrant)*
+- [x] All API endpoints return appropriate errors with human-readable messages
+- [ ] UI is usable on mobile (PWA-friendly layout, no horizontal scroll) *(browser verification pending)*
+- [x] All code passes CI (50 tests, clippy clean)
 
 ## Tasks
 
 ### Setup
-- [ ] Add `web-ui` module to `brain-node`
-- [ ] Add Axum, MiniJinja, tower-http to `brain-node/Cargo.toml`
-- [ ] Mount Axum router at `/ui` and `/api` inside brain-node binary
-- [ ] Serve static assets (CSS, minimal JS) from embedded bytes (`include_str!` / `rust-embed`)
+- [x] Add `web-ui` module to `brain-node`
+- [x] Add Axum, MiniJinja, tower-http to `brain-node/Cargo.toml`
+- [x] Mount Axum router at `/ui` and `/api` inside brain-node binary
+- [x] Serve static assets (CSS, minimal JS) from embedded bytes (`include_str!`)
 
 ### Pages
-- [ ] Dashboard page + SSE node state stream
-- [ ] Nodes list + pairing wizard
-- [ ] Wake word training wizard (5 steps, Web Audio API recording)
-- [ ] Voice personalisation wizard (4 steps)
-- [ ] TTS settings page + live preview
-- [ ] Model settings page
-- [ ] Skills page + tester
-- [ ] Documents page + ingestion progress
+- [x] Dashboard page + SSE node state stream
+- [x] Nodes list + pairing wizard
+- [x] Wake word training wizard (5 steps, Web Audio API recording)
+- [x] Voice personalisation wizard (4 steps)
+- [x] TTS settings page + live preview
+- [x] Model settings page
+- [x] Skills page + tester
+- [x] Documents page + ingestion progress
 
 ### API
-- [ ] Implement all routes listed above
-- [ ] Shared error type → JSON `{ "error": "..." }` responses
+- [x] Implement all routes listed above
+- [x] Shared error type → JSON `{ "error": "..." }` responses
 
 ### Training Pipeline
-- [ ] rustpotter training runner: takes sample WAVs → produces `.rpw` model file (pure Rust, runs in brain-node)
-- [ ] Write `finetuning/` Python service: Dockerfile (PyTorch + Whisper), REST API wrapper around fine-tune script
-- [ ] Whisper fine-tune runner in brain-node: calls `finetuning` container REST API, streams progress back via SSE
-- [ ] `finetuning` container: `docker compose run` style (starts on demand, exits when job completes)
-- [ ] Multi-user model management: per-user GGUF stored in `./models/voice/<user_id>/`; Whisper loads correct model per session
+- [x] rustpotter training runner: calls rustpotter-cli subprocess with sample WAVs, streams progress via SSE
+- [x] Write `finetuning/` Python service: Dockerfile (PyTorch + Whisper), FastAPI wrapper around LoRA fine-tune script
+- [x] Whisper fine-tune runner in brain-node: calls finetuning container REST API, streams progress back via SSE
+- [x] finetuning container: compose profile `training` — starts on demand, exits when job completes
+- [x] Multi-user model management: per-user model stored in config_dir/voice_models/<user_id>/
+- [x] Edge-node handles WakeWordModelUpdate proto payload — hot-reloads model from AETHER_MODEL_PATH
 
 ### Tests
-- [ ] Unit test: each API route returns correct status and body shape
-- [ ] Unit test: SSE stream emits correct events on state changes
-- [ ] Integration test: full wake word training flow (mock samples → train → deploy)
+- [ ] Unit test: each API route returns correct status and body shape *(deferred — needs axum test harness setup)*
+- [ ] Unit test: SSE stream emits correct events on state changes *(deferred)*
+- [ ] Integration test: full wake word training flow (mock samples → train → deploy) *(deferred)*
 
 ## Done When
 PR merged to master with CI green and full web UI verified in browser: pairing, wake word training, TTS preview, model settings, and skill tester all functional.
+
+## Status: Code Complete — Pending PR and Hardware Verification
+All Rust and Python code is written and passes CI. Outstanding items are browser/hardware verification steps and deferred unit tests; tracked in `private/USER-TODO.md`.

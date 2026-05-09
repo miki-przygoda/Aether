@@ -28,7 +28,7 @@ async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
         tts: None,
-        tts_settings: TtsSettings::default(),
+        tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
     };
@@ -191,7 +191,7 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
         tts: None,
-        tts_settings: TtsSettings::default(),
+        tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
     };
@@ -318,7 +318,7 @@ async fn stt_transcription_sends_transcript_update() {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
         tts: None,
-        tts_settings: TtsSettings::default(),
+        tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
     };
@@ -395,7 +395,7 @@ async fn trie_match_sends_skill_action() {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
         tts: None,
-        tts_settings: TtsSettings::default(),
+        tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
     };
@@ -491,7 +491,7 @@ async fn llm_invoked_on_trie_no_match_sends_skill_action() {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: Some(llm),
         tts: None,
-        tts_settings: TtsSettings::default(),
+        tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
     };
@@ -595,7 +595,7 @@ async fn full_pipeline_pcm_to_tts_with_mocked_models() {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: Some(llm),
         tts: Some(tts),
-        tts_settings: TtsSettings::default(),
+        tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
     };
@@ -707,7 +707,7 @@ async fn tts_chunk_sent_after_skill_action() {
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
         tts: Some(tts),
-        tts_settings: TtsSettings::default(),
+        tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
     };
