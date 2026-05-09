@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Model Settings — Aether{% endblock %}
+{% block heading %}Model Settings{% endblock %}
+
+{% block content %}
+<form id="model-form" class="card" style="max-width:560px">
+  <h2>LLM Routing</h2>
+  <div class="radio-group">
+    <label><input type="radio" name="llm_routing" value="fast"
+      {% if settings.llm_routing == "fast" %}checked{% endif %}> Fast only</label>
+    <label><input type="radio" name="llm_routing" value="auto"
+      {% if settings.llm_routing == "auto" or not settings.llm_routing %}checked{% endif %}> Auto (default)</label>
+  </div>
+
+  <h2 style="margin-top:1.5rem">Whisper Mode</h2>
+  <div class="radio-group">
+    <label><input type="radio" name="whisper_mode" value="medium"
+      {% if settings.whisper_mode == "medium" %}checked{% endif %}> Medium only</label>
+    <label><input type="radio" name="whisper_mode" value="dynamic"
+      {% if settings.whisper_mode == "dynamic" or not settings.whisper_mode %}checked{% endif %}> Dynamic (default)</label>
+    <label><input type="radio" name="whisper_mode" value="large"
+      {% if settings.whisper_mode == "large" %}checked{% endif %}> Large only</label>
+  </div>
+
+  <label class="field" style="margin-top:1rem" id="confidence-row">
+    <span>Confidence threshold <span class="val-display" id="conf-display">{{ settings.whisper_confidence }}</span></span>
+    <input type="range" id="whisper_confidence" name="whisper_confidence"
+           min="0.5" max="1.0" step="0.05" value="{{ settings.whisper_confidence }}"
+           oninput="document.getElementById('conf-display').textContent = (+this.value).toFixed(2)">
+  </label>
+
+  <div style="margin-top:1.5rem;display:flex;gap:.75rem">
+    <button type="submit" class="btn">Save</button>
+    <span id="save-msg" style="display:none;align-self:center;color:var(--green)">Saved!</span>
+  </div>
+</form>
+
+{% if ollama_models %}
+<div class="card" style="max-width:560px;margin-top:1.5rem">
+  <h2>Ollama Models</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+      {% for m in ollama_models %}
+      <tr>
+        <td>{{ m.name }}</td>
+        <td class="muted">{{ m.size }}</td>
+        <td><button class="btn btn-sm btn-danger" onclick="removeModel('{{ m.name }}')">Remove</button></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="toolbar" style="margin-top:1rem">
+    <input id="pull-name" type="text" placeholder="model:tag">
+    <button class="btn btn-secondary" onclick="pullModel()">Pull</button>
+  </div>
+</div>
+{% endif %}
+
+<script>
+document.getElementById('model-form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = {
+    llm_model: '{{ settings.llm_model }}',
+    whisper_mode: fd.get('whisper_mode'),
+    whisper_confidence: parseFloat(fd.get('whisper_confidence')),
+    llm_routing: fd.get('llm_routing'),
+    embed_model: '{{ settings.embed_model }}',
+  };
+  const resp = await fetch('/api/settings/models', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (resp.ok) {
+    const msg = document.getElementById('save-msg');
+    msg.style.display = 'inline';
+    setTimeout(() => msg.style.display = 'none', 2000);
+  } else { alert('Save failed'); }
+});
+
+async function pullModel() {
+  const name = document.getElementById('pull-name').value.trim();
+  if (!name) return;
+  const resp = await fetch('/api/settings/models/' + encodeURIComponent(name) + '/pull', { method: 'POST' });
+  if (resp.ok) location.reload();
+  else alert('Pull failed');
+}
+
+async function removeModel(name) {
+  if (!confirm('Remove ' + name + '?')) return;
+  const resp = await fetch('/api/settings/models/' + encodeURIComponent(name), { method: 'DELETE' });
+  if (resp.ok) location.reload();
+  else alert('Remove failed');
+}
+</script>
+{% endblock %}

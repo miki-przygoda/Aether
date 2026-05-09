@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}Wake Word Training — Aether{% endblock %}
+{% block heading %}Wake Word Training{% endblock %}
+
+{% block content %}
+<div class="wizard" id="wizard">
+
+  <!-- Step indicator -->
+  <div class="steps">
+    <span class="step active" data-step="1">1 Select nodes</span>
+    <span class="step" data-step="2">2 Record samples</span>
+    <span class="step" data-step="3">3 Review</span>
+    <span class="step" data-step="4">4 Train</span>
+    <span class="step" data-step="5">5 Deploy</span>
+  </div>
+
+  <!-- Step 1: Select target nodes -->
+  <div class="step-panel active" id="step1">
+    <h2>Select target nodes</h2>
+    <p>The trained model will be deployed to selected nodes.</p>
+    {% if node_ids %}
+    <div class="checkbox-group">
+      {% for nid in node_ids %}
+      <label><input type="checkbox" class="node-select" value="{{ nid }}" checked> {{ nid }}</label>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No nodes connected — model will be saved and can be deployed later.</p>
+    {% endif %}
+    <button class="btn" onclick="goStep(2)" style="margin-top:1rem">Next</button>
+  </div>
+
+  <!-- Step 2: Record samples -->
+  <div class="step-panel" id="step2">
+    <h2>Record samples</h2>
+    <p>Say <strong>"Hey Aether"</strong> clearly, then stop. Record at least 15 samples.</p>
+
+    <div class="record-controls">
+      <button class="btn" id="record-btn" onclick="toggleRecord()">⏺ Start Recording</button>
+      <canvas id="waveform" width="340" height="60" style="margin-left:1rem;background:var(--bg2);border-radius:6px"></canvas>
+    </div>
+
+    <p class="muted" style="margin-top:.5rem" id="sample-count-label">{{ sample_count }} / 15 samples recorded</p>
+    <div class="progress" style="margin-bottom:1rem"><div class="progress-fill" id="sample-progress" style="width:{{ [sample_count / 15 * 100, 100] | min }}%"></div></div>
+
+    <div id="sample-list" style="margin-top:1rem">
+      {% for s in samples %}
+      <div class="sample-card" id="sc-{{ s.id }}">
+        <span>{{ s.filename }} ({{ s.duration_ms }}ms)</span>
+        <button class="btn btn-sm btn-danger" onclick="deleteSample('{{ s.id }}')">✕</button>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div style="margin-top:1.5rem;display:flex;gap:.75rem">
+      <button class="btn btn-secondary" onclick="goStep(1)">Back</button>
+      <button class="btn" onclick="goStep(3)">Next</button>
+    </div>
+  </div>
+
+  <!-- Step 3: Review -->
+  <div class="step-panel" id="step3">
+    <h2>Review samples</h2>
+    <p id="review-count">Loading…</p>
+    <div id="review-list"></div>
+    <div style="margin-top:1.5rem;display:flex;gap:.75rem">
+      <button class="btn btn-secondary" onclick="goStep(2)">Back</button>
+      <button class="btn" onclick="goStep(4)">Start Training</button>
+    </div>
+  </div>
+
+  <!-- Step 4: Train -->
+  <div class="step-panel" id="step4">
+    <h2>Training</h2>
+    <div class="progress"><div class="progress-fill" id="train-progress" style="width:0%"></div></div>
+    <p id="train-msg" class="muted">Click train to begin.</p>
+    <button class="btn" id="train-btn" onclick="startTraining()">Train model</button>
+    <div style="margin-top:1.5rem">
+      <button class="btn btn-secondary" onclick="goStep(3)">Back</button>
+    </div>
+  </div>
+
+  <!-- Step 5: Deploy -->
+  <div class="step-panel" id="step5">
+    <h2>Deploy</h2>
+    <p id="deploy-result">Training complete. Click deploy to push the model to selected nodes.</p>
+    <button class="btn" onclick="deployModel()">Deploy to nodes</button>
+    <p id="deploy-msg" class="muted" style="margin-top:1rem"></p>
+  </div>
+
+</div>
+
+<script>
+let mediaRecorder = null, audioChunks = [], recording = false;
+
+function goStep(n) {
+  document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.step').forEach(s => {
+    s.classList.toggle('active', parseInt(s.dataset.step) === n);
+    s.classList.toggle('done', parseInt(s.dataset.step) < n);
+  });
+  document.getElementById('step' + n).classList.add('active');
+  if (n === 3) loadReview();
+}
+
+async function toggleRecord() {
+  if (recording) {
+    mediaRecorder.stop();
+    return;
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mediaRecorder = new MediaRecorder(stream);
+  audioChunks = [];
+  mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+  mediaRecorder.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    recording = false;
+    document.getElementById('record-btn').textContent = '⏺ Start Recording';
+    const blob = new Blob(audioChunks, { type: 'audio/wav' });
+    const form = new FormData();
+    form.append('audio', blob, 'sample.wav');
+    const resp = await fetch('/api/training/wake-word/samples', { method: 'POST', body: form });
+    if (resp.ok) {
+      const s = await resp.json();
+      addSampleCard(s);
+      const count = document.querySelectorAll('.sample-card').length;
+      document.getElementById('sample-count-label').textContent = count + ' / 15 samples recorded';
+      document.getElementById('sample-progress').style.width = Math.min(count/15*100,100) + '%';
+    }
+  };
+  mediaRecorder.start();
+  recording = true;
+  document.getElementById('record-btn').textContent = '⏹ Stop Recording';
+}
+
+function addSampleCard(s) {
+  const list = document.getElementById('sample-list');
+  const div = document.createElement('div');
+  div.className = 'sample-card';
+  div.id = 'sc-' + s.id;
+  div.innerHTML = '<span>' + s.filename + ' (' + s.duration_ms + 'ms)</span>' +
+    '<button class="btn btn-sm btn-danger" onclick="deleteSample(\'' + s.id + '\')">✕</button>';
+  list.appendChild(div);
+}
+
+async function deleteSample(id) {
+  const resp = await fetch('/api/training/wake-word/samples/' + id, { method: 'DELETE' });
+  if (resp.ok) document.getElementById('sc-' + id)?.remove();
+}
+
+async function loadReview() {
+  const resp = await fetch('/api/training/wake-word/samples');
+  const samples = await resp.json();
+  document.getElementById('review-count').textContent = samples.length + ' samples';
+  const list = document.getElementById('review-list');
+  list.innerHTML = samples.map(s =>
+    '<div class="sample-card"><span>' + s.filename + ' (' + s.duration_ms + 'ms, ' + Math.round(s.size_bytes/1024) + ' KB)</span></div>'
+  ).join('');
+}
+
+async function startTraining() {
+  document.getElementById('train-btn').disabled = true;
+  const es = new EventSource('/events/training/wake-word');
+  es.onmessage = function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      document.getElementById('train-progress').style.width = data.percent + '%';
+      document.getElementById('train-msg').textContent = data.message;
+      if (data.done) {
+        es.close();
+        setTimeout(() => goStep(5), 1000);
+      }
+    } catch (_) {}
+  };
+  await fetch('/api/training/wake-word/train', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phrase: 'Hey Aether' }),
+  });
+}
+
+async function deployModel() {
+  const nodeIds = Array.from(document.querySelectorAll('.node-select:checked')).map(c => c.value);
+  const resp = await fetch('/api/training/wake-word/deploy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ node_ids: nodeIds }),
+  });
+  const data = await resp.json();
+  document.getElementById('deploy-msg').textContent =
+    resp.ok ? 'Deployed to ' + data.deployed_to + ' node(s).' : 'Deploy failed: ' + (data.error || '');
+}
+</script>
+{% endblock %}

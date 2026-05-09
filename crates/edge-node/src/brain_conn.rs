@@ -175,6 +175,20 @@ pub async fn stream_audio(
                     tracing::warn!("TTS playback error: {e}");
                 }
             }
+            Some(brain_response::Payload::WakeWordModel(update)) => {
+                tracing::info!(
+                    bytes = update.model_bytes.len(),
+                    "wake word model update received — hot-reloading"
+                );
+                if let Ok(path) = std::env::var("AETHER_MODEL_PATH") {
+                    match std::fs::write(&path, &update.model_bytes) {
+                        Ok(()) => tracing::info!(%path, "wake word model written"),
+                        Err(e) => tracing::warn!(%path, "failed to write model: {e}"),
+                    }
+                } else {
+                    tracing::warn!("AETHER_MODEL_PATH not set — cannot save model update");
+                }
+            }
             None => {}
         }
     }

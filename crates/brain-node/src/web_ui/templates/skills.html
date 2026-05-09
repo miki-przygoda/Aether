@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Skills — Aether{% endblock %}
+{% block heading %}Skills{% endblock %}
+
+{% block content %}
+<div class="card" style="margin-bottom:2rem">
+  <h2>Skill Tester</h2>
+  <p>Type a phrase to see which skill the assistant would dispatch.</p>
+  <div class="toolbar" style="margin-top:1rem">
+    <input id="test-query" type="text" placeholder="e.g. turn on the lights" style="flex:1">
+    <button class="btn" onclick="testSkill()">Test</button>
+  </div>
+  <div id="test-result" style="margin-top:1rem;display:none"></div>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Action</th><th>Description</th><th>Example phrases</th></tr></thead>
+    <tbody>
+      {% for skill in skills %}
+      <tr>
+        <td><code>{{ skill.action }}</code></td>
+        <td>{{ skill.description }}</td>
+        <td class="muted">{{ skill.example_phrases | join(", ") }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function testSkill() {
+  const query = document.getElementById('test-query').value.trim();
+  if (!query) return;
+  const el = document.getElementById('test-result');
+  el.style.display = 'block';
+  el.innerHTML = '<p class="muted">Testing…</p>';
+  try {
+    const resp = await fetch('/api/skills/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      el.innerHTML = '<div class="alert alert-error">' + (data.error || resp.statusText) + '</div>';
+    } else {
+      el.innerHTML = `
+        <div class="result-block">
+          <p><strong>Action:</strong> <code>${data.action}</code> <span class="badge">${data.matched}</span></p>
+          <p><strong>Reply:</strong> "${data.spoken_reply}"</p>
+          <details><summary>Params JSON</summary><pre>${JSON.stringify(data.params, null, 2)}</pre></details>
+        </div>`;
+    }
+  } catch (err) {
+    el.innerHTML = '<div class="alert alert-error">' + err + '</div>';
+  }
+}
+document.getElementById('test-query').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') testSkill();
+});
+</script>
+{% endblock %}

@@ -65,6 +65,11 @@ impl SessionRegistry {
         }
     }
 
+    /// Return a point-in-time snapshot of all active sessions (used by web UI dashboard).
+    pub async fn snapshot(&self) -> Vec<Session> {
+        self.inner.read().await.values().cloned().collect()
+    }
+
     #[cfg(test)]
     pub async fn count(&self) -> usize {
         self.inner.read().await.len()

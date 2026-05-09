@@ -58,13 +58,15 @@ RUN ldconfig
 
 COPY --from=builder /brain-node /usr/local/bin/brain-node
 
-EXPOSE 50051 50052
+EXPOSE 50051 50052 8080
 
-VOLUME ["/data/certs", "/models"]
+VOLUME ["/data/certs", "/data/config", "/models"]
 
 ENV BRAIN_GRPC_PORT=50051 \
     BRAIN_PAIR_PORT=50052 \
+    BRAIN_WEB_PORT=8080 \
     BRAIN_CERTS_DIR=/data/certs \
+    BRAIN_CONFIG_DIR=/data/config \
     WHISPER_MODEL_PATH=/models/whisper/ggml-medium.bin \
     WHISPER_FALLBACK_MODEL_PATH=/models/whisper/distil-large-v3.bin \
     WHISPER_CONFIDENCE_THRESHOLD=0.75 \

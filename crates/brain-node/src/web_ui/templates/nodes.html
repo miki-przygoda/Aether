@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Nodes — Aether{% endblock %}
+{% block heading %}Nodes{% endblock %}
+{% block header_actions %}<a href="/ui/nodes/pair" class="btn">Pair new node</a>{% endblock %}
+
+{% block content %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Node ID</th><th>State</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+      {% for node in nodes %}
+      <tr>
+        <td><strong>{{ node.node_id }}</strong></td>
+        <td><span class="badge badge-{{ node.state | lower }}">{{ node.state }}</span></td>
+        <td>
+          <button class="btn btn-sm btn-danger" onclick="unpairNode('{{ node.node_id }}')">Unpair</button>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="empty">No paired nodes. <a href="/ui/nodes/pair">Pair one now.</a></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+function unpairNode(id) {
+  if (!confirm('Unpair node "' + id + '"?')) return;
+  fetch('/api/nodes/' + encodeURIComponent(id), { method: 'DELETE' })
+    .then(() => location.reload());
+}
+</script>
+{% endblock %}
