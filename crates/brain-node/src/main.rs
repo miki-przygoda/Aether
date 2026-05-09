@@ -7,6 +7,7 @@ mod pair;
 mod session;
 mod skills;
 mod stt;
+mod tts;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -59,6 +60,11 @@ enum Command {
         /// Ollama model name used for the LLM fast tier.
         #[arg(long, env = "LLM_FAST_MODEL", default_value = "llama3.2:3b")]
         llm_model: String,
+
+        /// Path to the Kokoro-82M ONNX model file.
+        /// TTS is disabled if not set; expects vocab.json and voice_style.bin alongside.
+        #[arg(long, env = "KOKORO_MODEL_PATH")]
+        kokoro_model: Option<PathBuf>,
     },
 
     /// Pairing ceremony — plain (non-TLS) gRPC on a separate port.
@@ -84,8 +90,9 @@ async fn main() -> Result<()> {
             whisper_confidence,
             ollama_url,
             llm_model,
+            kokoro_model,
         } => {
-            serve(
+            serve(ServeArgs {
                 port,
                 certs_dir,
                 whisper_model,
@@ -93,14 +100,15 @@ async fn main() -> Result<()> {
                 whisper_confidence,
                 ollama_url,
                 llm_model,
-            )
+                kokoro_model,
+            })
             .await
         }
         Command::Pair { port, certs_dir } => run_pair_server(port, certs_dir).await,
     }
 }
 
-async fn serve(
+struct ServeArgs {
     port: u16,
     certs_dir: PathBuf,
     whisper_model: Option<PathBuf>,
@@ -108,7 +116,20 @@ async fn serve(
     whisper_confidence: f32,
     ollama_url: String,
     llm_model: String,
-) -> Result<()> {
+    kokoro_model: Option<PathBuf>,
+}
+
+async fn serve(args: ServeArgs) -> Result<()> {
+    let ServeArgs {
+        port,
+        certs_dir,
+        whisper_model,
+        whisper_fallback,
+        whisper_confidence,
+        ollama_url,
+        llm_model,
+        kokoro_model,
+    } = args;
     let local_ip = local_ip_address::local_ip().context("detecting local IP")?;
     tracing::info!(ip = %local_ip, "brain local address");
 
@@ -149,6 +170,18 @@ async fn serve(
         llm::OllamaClient::new(ollama_url, llm_model).context("creating Ollama client")?,
     ));
 
+    let tts_engine: Option<Arc<dyn tts::TextToSpeech>> = if let Some(model_path) = kokoro_model {
+        let model_str = model_path
+            .to_str()
+            .context("KOKORO_MODEL_PATH is not valid UTF-8")?;
+        tracing::info!(model = %model_str, "loading Kokoro TTS model");
+        let k = tts::KokoroTts::new(model_str).context("loading Kokoro TTS model")?;
+        Some(Arc::new(k))
+    } else {
+        tracing::warn!("--kokoro-model not set — TTS disabled");
+        None
+    };
+
     let addr: SocketAddr = ([0, 0, 0, 0], port).into();
     let service = BrainService {
         registry: SessionRegistry::new(),
@@ -156,6 +189,7 @@ async fn serve(
         stt: stt_engine,
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: llm_engine,
+        tts: tts_engine,
         skills: Arc::new(SkillRegistry::default()),
     };
 
@@ -188,6 +222,7 @@ async fn run_pair_server(port: u16, certs_dir: PathBuf) -> Result<()> {
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
+        tts: None,
         skills: Arc::new(SkillRegistry::default()),
     };
 

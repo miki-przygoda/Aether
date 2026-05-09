@@ -9,6 +9,7 @@ use crate::llm::LlmClient;
 use crate::session::SessionRegistry;
 use crate::skills::SkillRegistry;
 use crate::stt::{SpeechToText, TranscriptResult};
+use crate::tts::{encode_wav, TextToSpeech};
 use aether_core::LlmResponse;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,6 +27,7 @@ async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
+        tts: None,
         skills: Arc::new(SkillRegistry::default()),
     };
 
@@ -83,6 +85,17 @@ struct MockLlm {
 impl LlmClient for MockLlm {
     fn ask(&self, _transcript: &str) -> anyhow::Result<LlmResponse> {
         Ok(self.response.clone())
+    }
+}
+
+// ─── mock TTS ─────────────────────────────────────────────────────────────────
+
+struct MockTts;
+
+impl TextToSpeech for MockTts {
+    fn synthesise(&self, _text: &str) -> anyhow::Result<Vec<u8>> {
+        // Return a minimal valid WAV (silence, 100 samples at 24 kHz).
+        encode_wav(&vec![0.0f32; 100], 24_000)
     }
 }
 
@@ -176,6 +189,7 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
+        tts: None,
         skills: Arc::new(SkillRegistry::default()),
     };
 
@@ -300,6 +314,7 @@ async fn stt_transcription_sends_transcript_update() {
         stt: Some(stt),
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
+        tts: None,
         skills: Arc::new(SkillRegistry::default()),
     };
 
@@ -374,6 +389,7 @@ async fn trie_match_sends_skill_action() {
         stt: Some(stt),
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
+        tts: None,
         skills: Arc::new(SkillRegistry::default()),
     };
 
@@ -467,6 +483,7 @@ async fn llm_invoked_on_trie_no_match_sends_skill_action() {
         stt: Some(stt),
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: Some(llm),
+        tts: None,
         skills: Arc::new(SkillRegistry::default()),
     };
 
@@ -531,5 +548,102 @@ async fn llm_invoked_on_trie_no_match_sends_skill_action() {
             assert_eq!(a.action, "respond", "LLM action should be 'respond'");
         }
         other => panic!("expected Action from LLM, got: {other:?}"),
+    }
+}
+
+/// MockTts returns a valid WAV — verifies the brain sends a TtsChunk after the SkillAction.
+#[tokio::test]
+async fn tts_chunk_sent_after_skill_action() {
+    use crate::grpc::proto::brain_response;
+
+    let stt: Arc<dyn SpeechToText> = Arc::new(MockStt {
+        text: "play music".to_string(),
+        confidence: 0.95,
+    });
+    let tts: Arc<dyn TextToSpeech> = Arc::new(MockTts);
+
+    let registry = SessionRegistry::new();
+    let service = BrainService {
+        registry: registry.clone(),
+        certs_dir: std::path::PathBuf::from("/tmp"),
+        stt: Some(stt),
+        trie: Arc::new(aether_core::CommandTrie::default()),
+        llm: None,
+        tts: Some(tts),
+        skills: Arc::new(SkillRegistry::default()),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(
+        Server::builder()
+            .add_service(AetherBrainServer::new(service))
+            .serve_with_incoming(TcpListenerStream::new(listener)),
+    );
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    let channel = tonic::transport::Channel::from_shared(format!("http://{addr}"))
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<AudioChunk>(8);
+    let mut client = AetherBrainClient::new(channel);
+    let stream = ReceiverStream::new(rx);
+    let mut req = tonic::Request::new(stream);
+    req.metadata_mut()
+        .insert("x-node-id", "tts-test-pi".parse().unwrap());
+
+    let resp = client.audio_stream(req).await.unwrap();
+    let mut resp_stream = resp.into_inner();
+
+    for seq in 0u64..2 {
+        tx.send(AudioChunk {
+            pcm: vec![0u8; 2048],
+            seq,
+        })
+        .await
+        .unwrap();
+    }
+    drop(tx);
+
+    // Message 1: TranscriptUpdate.
+    let first: BrainResponse = tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
+        .await
+        .expect("timed out waiting for TranscriptUpdate")
+        .expect("stream error")
+        .expect("stream closed before TranscriptUpdate");
+    assert!(
+        matches!(first.payload, Some(brain_response::Payload::Transcript(_))),
+        "expected Transcript, got: {:?}",
+        first.payload
+    );
+
+    // Message 2: SkillAction.
+    let second: BrainResponse = tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
+        .await
+        .expect("timed out waiting for SkillAction")
+        .expect("stream error")
+        .expect("stream closed before SkillAction");
+    assert!(
+        matches!(second.payload, Some(brain_response::Payload::Action(_))),
+        "expected Action, got: {:?}",
+        second.payload
+    );
+
+    // Message 3: TtsChunk with valid WAV bytes.
+    let third: BrainResponse = tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
+        .await
+        .expect("timed out waiting for TtsChunk")
+        .expect("stream error")
+        .expect("stream closed before TtsChunk");
+
+    match third.payload {
+        Some(brain_response::Payload::TtsAudio(chunk)) => {
+            assert!(chunk.wav.len() > 44, "WAV should be more than a header");
+            assert_eq!(&chunk.wav[0..4], b"RIFF", "should be valid WAV");
+        }
+        other => panic!("expected TtsAudio, got: {other:?}"),
     }
 }
