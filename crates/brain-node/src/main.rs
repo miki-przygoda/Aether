@@ -268,18 +268,14 @@ fn generate_wake_word_samples(
 
             let filename = format!("{stem}_sp{speed:.1}_{n:02}.wav");
             let path = output_dir.join(&filename);
-            std::fs::write(&path, &wav)
-                .with_context(|| format!("writing {}", path.display()))?;
+            std::fs::write(&path, &wav).with_context(|| format!("writing {}", path.display()))?;
 
             tracing::info!(file = %filename, speed, "wrote sample");
             total += 1;
         }
     }
 
-    println!(
-        "Generated {total} samples in {}",
-        output_dir.display()
-    );
+    println!("Generated {total} samples in {}", output_dir.display());
     println!("Next: run scripts/train-wake-word.sh to train the rustpotter model.");
     Ok(())
 }

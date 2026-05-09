@@ -641,16 +641,18 @@ async fn full_pipeline_pcm_to_tts_with_mocked_models() {
     }
 
     // Message 2: SkillAction from LLM (trie returned NoMatch).
-    let second: BrainResponse =
-        tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
-            .await
-            .expect("timed out waiting for SkillAction from LLM")
-            .expect("stream error")
-            .expect("stream closed before LLM SkillAction");
+    let second: BrainResponse = tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
+        .await
+        .expect("timed out waiting for SkillAction from LLM")
+        .expect("stream error")
+        .expect("stream closed before LLM SkillAction");
 
     match second.payload {
         Some(brain_response::Payload::Action(a)) => {
-            assert_eq!(a.action, "respond", "LLM path should produce 'respond' action");
+            assert_eq!(
+                a.action, "respond",
+                "LLM path should produce 'respond' action"
+            );
         }
         other => panic!("expected Action, got: {other:?}"),
     }
@@ -665,7 +667,11 @@ async fn full_pipeline_pcm_to_tts_with_mocked_models() {
     match third.payload {
         Some(brain_response::Payload::TtsAudio(chunk)) => {
             assert!(chunk.wav.len() > 44, "WAV must be more than a header");
-            assert_eq!(&chunk.wav[0..4], b"RIFF", "TtsChunk should contain valid WAV");
+            assert_eq!(
+                &chunk.wav[0..4],
+                b"RIFF",
+                "TtsChunk should contain valid WAV"
+            );
         }
         other => panic!("expected TtsAudio, got: {other:?}"),
     }
