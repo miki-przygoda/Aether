@@ -66,19 +66,19 @@ impl KokoroTts {
     }
 }
 
-impl TextToSpeech for KokoroTts {
-    fn synthesise(&self, text: &str) -> Result<Vec<u8>> {
+impl KokoroTts {
+    /// Synthesise `text` at the given playback `speed` (1.0 = normal, 0.8 = slower, 1.2 = faster).
+    /// Useful for generating training samples with varied pace.
+    pub fn synthesise_at_speed(&self, text: &str, speed: f32) -> Result<Vec<u8>> {
         let phonemes = phonemize(text).context("phonemizing text via espeak-ng")?;
         let token_ids = phonemes_to_ids(&phonemes, &self.vocab);
 
-        // Surround with BOS/EOS padding token (ID 0).
         let tokens: Vec<i64> = std::iter::once(0)
             .chain(token_ids)
             .chain(std::iter::once(0))
             .collect();
         let seq_len = tokens.len();
 
-        // Style: repeat the 256-dim voice vector for every token position → [1, seq_len, 256].
         let style_data: Vec<f32> = self
             .style
             .iter()
@@ -91,7 +91,7 @@ impl TextToSpeech for KokoroTts {
             Tensor::<i64>::from_array(([1, seq_len], tokens)).context("building tokens tensor")?;
         let style_tensor = Tensor::<f32>::from_array(([1, seq_len, 256], style_data))
             .context("building style tensor")?;
-        let speed_tensor = Tensor::<f32>::from_array(([] as [usize; 0], vec![1.0f32]))
+        let speed_tensor = Tensor::<f32>::from_array(([] as [usize; 0], vec![speed]))
             .context("building speed tensor")?;
 
         let mut sess = self.session.lock().expect("session mutex poisoned");
@@ -108,6 +108,12 @@ impl TextToSpeech for KokoroTts {
             .context("extracting audio tensor from Kokoro output")?;
 
         encode_wav(samples, SAMPLE_RATE).context("encoding WAV")
+    }
+}
+
+impl TextToSpeech for KokoroTts {
+    fn synthesise(&self, text: &str) -> Result<Vec<u8>> {
+        self.synthesise_at_speed(text, 1.0)
     }
 }
 

@@ -76,6 +76,28 @@ enum Command {
         #[arg(long, env = "BRAIN_CERTS_DIR", default_value = "/data/certs")]
         certs_dir: PathBuf,
     },
+
+    /// Generate synthetic wake-word WAV samples via Kokoro TTS.
+    ///
+    /// Outputs `<phrase>_sp<speed>_<n>.wav` files into `--output-dir`.
+    /// Run this after `scripts/download-models.sh` has populated `./models/tts/`.
+    GenerateWakeWordSamples {
+        /// Path to the Kokoro-82M ONNX model file (same as --kokoro-model for serve).
+        #[arg(long, env = "KOKORO_MODEL_PATH")]
+        kokoro_model: PathBuf,
+
+        /// Directory to write WAV samples into (created if absent).
+        #[arg(long, default_value = "models/wake-word/samples/synthetic")]
+        output_dir: PathBuf,
+
+        /// Wake word phrase to synthesise.
+        #[arg(long, default_value = "Hey Aether")]
+        phrase: String,
+
+        /// Number of samples to generate per speed level.
+        #[arg(long, default_value = "3")]
+        count: usize,
+    },
 }
 
 #[tokio::main]
@@ -105,6 +127,12 @@ async fn main() -> Result<()> {
             .await
         }
         Command::Pair { port, certs_dir } => run_pair_server(port, certs_dir).await,
+        Command::GenerateWakeWordSamples {
+            kokoro_model,
+            output_dir,
+            phrase,
+            count,
+        } => generate_wake_word_samples(kokoro_model, output_dir, phrase, count),
     }
 }
 
@@ -208,6 +236,51 @@ async fn serve(args: ServeArgs) -> Result<()> {
         .serve(addr)
         .await?;
 
+    Ok(())
+}
+
+fn generate_wake_word_samples(
+    kokoro_model: PathBuf,
+    output_dir: PathBuf,
+    phrase: String,
+    count: usize,
+) -> Result<()> {
+    let model_str = kokoro_model
+        .to_str()
+        .context("KOKORO_MODEL_PATH is not valid UTF-8")?;
+
+    tracing::info!(model = %model_str, phrase = %phrase, "loading Kokoro TTS model");
+    let tts = tts::KokoroTts::new(model_str).context("loading Kokoro TTS model")?;
+
+    std::fs::create_dir_all(&output_dir)
+        .with_context(|| format!("creating output directory {}", output_dir.display()))?;
+
+    // Speeds that give useful pitch/pace variation for wake-word training.
+    let speeds: &[f32] = &[0.8, 0.9, 1.0, 1.1, 1.2];
+    let stem = phrase.to_lowercase().replace(' ', "_");
+    let mut total = 0usize;
+
+    for &speed in speeds {
+        for n in 0..count {
+            let wav = tts
+                .synthesise_at_speed(&phrase, speed)
+                .with_context(|| format!("synthesising at speed {speed}"))?;
+
+            let filename = format!("{stem}_sp{speed:.1}_{n:02}.wav");
+            let path = output_dir.join(&filename);
+            std::fs::write(&path, &wav)
+                .with_context(|| format!("writing {}", path.display()))?;
+
+            tracing::info!(file = %filename, speed, "wrote sample");
+            total += 1;
+        }
+    }
+
+    println!(
+        "Generated {total} samples in {}",
+        output_dir.display()
+    );
+    println!("Next: run scripts/train-wake-word.sh to train the rustpotter model.");
     Ok(())
 }
 
