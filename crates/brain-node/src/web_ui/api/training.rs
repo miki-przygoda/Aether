@@ -1,4 +1,6 @@
-use crate::web_ui::{json_error, AppState, ProgressEvent, TrainingStatus, VoiceSample, VoiceUser, WakeSample};
+use crate::web_ui::{
+    json_error, AppState, ProgressEvent, TrainingStatus, VoiceSample, VoiceUser, WakeSample,
+};
 use axum::{
     extract::{Multipart, Path, State},
     http::StatusCode,
@@ -9,9 +11,7 @@ use std::path::PathBuf;
 
 // ── Wake word samples ─────────────────────────────────────────────────────────
 
-pub async fn list_wake_samples(
-    State(state): State<AppState>,
-) -> Json<Vec<WakeSample>> {
+pub async fn list_wake_samples(State(state): State<AppState>) -> Json<Vec<WakeSample>> {
     Json(state.wake_training.lock().await.samples.clone())
 }
 
@@ -27,9 +27,10 @@ pub async fn upload_wake_sample(
         return Err((StatusCode::BAD_REQUEST, json_error("no file field")));
     };
 
-    let data = field.bytes().await.map_err(|e| {
-        (StatusCode::BAD_REQUEST, json_error(e.to_string()))
-    })?;
+    let data = field
+        .bytes()
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, json_error(e.to_string())))?;
 
     let id = uuid::Uuid::new_v4().to_string();
     let filename = format!("sample_{id}.wav");
@@ -45,7 +46,12 @@ pub async fn upload_wake_sample(
         size_bytes: data.len() as u64,
     };
 
-    state.wake_training.lock().await.samples.push(sample.clone());
+    state
+        .wake_training
+        .lock()
+        .await
+        .samples
+        .push(sample.clone());
     Ok(Json(sample))
 }
 
@@ -86,7 +92,10 @@ pub async fn train_wake_word(
             ));
         }
         if matches!(training.status, TrainingStatus::Running { .. }) {
-            return Err((StatusCode::CONFLICT, json_error("training already in progress")));
+            return Err((
+                StatusCode::CONFLICT,
+                json_error("training already in progress"),
+            ));
         }
     }
 
@@ -153,13 +162,13 @@ pub async fn train_wake_word(
     Ok(Json(serde_json::json!({ "status": "training started" })))
 }
 
-fn run_rustpotter_train(
-    phrase: &str,
-    samples: &[PathBuf],
-    output: &PathBuf,
-) -> anyhow::Result<()> {
+fn run_rustpotter_train(phrase: &str, samples: &[PathBuf], output: &PathBuf) -> anyhow::Result<()> {
     let mut cmd = std::process::Command::new("rustpotter-cli");
-    cmd.arg("train").arg("--wakeword").arg(phrase).arg("--output").arg(output);
+    cmd.arg("train")
+        .arg("--wakeword")
+        .arg(phrase)
+        .arg("--output")
+        .arg(output);
     for s in samples {
         cmd.arg(s);
     }
@@ -182,7 +191,10 @@ pub async fn deploy_wake_word(
     let model_path = {
         let training = state.wake_training.lock().await;
         training.model_path.clone().ok_or_else(|| {
-            (StatusCode::BAD_REQUEST, json_error("no trained model available"))
+            (
+                StatusCode::BAD_REQUEST,
+                json_error("no trained model available"),
+            )
         })?
     };
 
@@ -205,11 +217,7 @@ pub async fn deploy_wake_word(
     })))
 }
 
-async fn push_model_to_nodes(
-    state: &AppState,
-    node_ids: &[String],
-    model_bytes: Vec<u8>,
-) -> usize {
+async fn push_model_to_nodes(state: &AppState, node_ids: &[String], model_bytes: Vec<u8>) -> usize {
     // We broadcast a synthetic NodeStateEvent; the real push path needs a
     // dedicated channel per session. For Phase 5 the model is saved to a
     // shared volume path that edge nodes can read on reconnect.
@@ -227,9 +235,7 @@ async fn push_model_to_nodes(
 
 // ── Voice users ───────────────────────────────────────────────────────────────
 
-pub async fn list_voice_users(
-    State(state): State<AppState>,
-) -> Json<Vec<VoiceUser>> {
+pub async fn list_voice_users(State(state): State<AppState>) -> Json<Vec<VoiceUser>> {
     Json(state.voice_training.lock().await.users.clone())
 }
 
@@ -257,12 +263,16 @@ pub async fn delete_voice_user(
     Path(id): Path<String>,
     State(state): State<AppState>,
 ) -> StatusCode {
-    state.voice_training.lock().await.users.retain(|u| u.id != id);
+    state
+        .voice_training
+        .lock()
+        .await
+        .users
+        .retain(|u| u.id != id);
     StatusCode::NO_CONTENT
 }
 
 // ── Voice samples ─────────────────────────────────────────────────────────────
-
 
 pub async fn upload_voice_sample(
     State(state): State<AppState>,
@@ -291,8 +301,8 @@ pub async fn upload_voice_sample(
         }
     }
 
-    let wav = wav_data
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, json_error("missing audio field")))?;
+    let wav =
+        wav_data.ok_or_else(|| (StatusCode::BAD_REQUEST, json_error("missing audio field")))?;
 
     let id = uuid::Uuid::new_v4().to_string();
     let filename = format!("voice_{user_id}_{id}.wav");
@@ -325,7 +335,10 @@ pub async fn train_voice(
     Json(body): Json<TrainVoiceBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let finetuning_url = state.finetuning_url.clone().ok_or_else(|| {
-        (StatusCode::SERVICE_UNAVAILABLE, json_error("finetuning service not configured"))
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json_error("finetuning service not configured"),
+        )
     })?;
 
     let samples: Vec<VoiceSample> = state
@@ -339,7 +352,10 @@ pub async fn train_voice(
         .collect();
 
     if samples.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, json_error("no samples for this user")));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            json_error("no samples for this user"),
+        ));
     }
 
     let tx = state.voice_progress_tx.clone();
@@ -354,8 +370,7 @@ pub async fn train_voice(
             .expect("build reqwest client");
 
         // Build multipart form with all sample WAVs.
-        let mut form = reqwest::blocking::multipart::Form::new()
-            .text("user_id", user_id.clone());
+        let mut form = reqwest::blocking::multipart::Form::new().text("user_id", user_id.clone());
         for sample in &samples {
             if let Ok(bytes) = std::fs::read(samples_dir.join(&sample.filename)) {
                 form = form.part(

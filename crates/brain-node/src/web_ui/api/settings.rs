@@ -25,7 +25,10 @@ pub async fn save_tts(
     Json(body): Json<SaveTtsBody>,
 ) -> Result<Json<TtsSettings>, (StatusCode, Json<serde_json::Value>)> {
     let speed = body.speed.clamp(0.5, 2.0);
-    let settings = TtsSettings { speed, voice: body.voice };
+    let settings = TtsSettings {
+        speed,
+        voice: body.voice,
+    };
     *state.tts_settings.write().await = settings.clone();
     persist_tts(&state, &settings)?;
     Ok(Json(settings))
@@ -54,7 +57,10 @@ pub async fn tts_preview(
     Json(body): Json<TtsPreviewBody>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let tts = state.tts.clone().ok_or_else(|| {
-        (StatusCode::SERVICE_UNAVAILABLE, json_error("TTS not configured"))
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json_error("TTS not configured"),
+        )
     })?;
     let current = state.tts_settings.read().await.clone();
     let settings = TtsSettings {
@@ -103,7 +109,11 @@ pub async fn pull_model(
             .post(format!("{ollama_url}/api/pull"))
             .json(&serde_json::json!({ "name": name }))
             .send()?;
-        anyhow::ensure!(resp.status().is_success(), "Ollama pull returned {}", resp.status());
+        anyhow::ensure!(
+            resp.status().is_success(),
+            "Ollama pull returned {}",
+            resp.status()
+        );
         Ok::<_, anyhow::Error>(())
     })
     .await
@@ -124,7 +134,11 @@ pub async fn remove_model(
             .delete(format!("{ollama_url}/api/delete"))
             .json(&serde_json::json!({ "name": name }))
             .send()?;
-        anyhow::ensure!(resp.status().is_success(), "Ollama delete returned {}", resp.status());
+        anyhow::ensure!(
+            resp.status().is_success(),
+            "Ollama delete returned {}",
+            resp.status()
+        );
         Ok::<_, anyhow::Error>(())
     })
     .await

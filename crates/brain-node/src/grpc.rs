@@ -9,8 +9,8 @@ use crate::vector_store::{VectorStore, COLLECTION_DOCUMENTS};
 use aether_core::trie::{ClassifyResult, CommandTrie};
 use aether_core::{NodeState, TtsSettings};
 use std::sync::Arc as StdArc;
-use tokio::sync::RwLock;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 

@@ -58,21 +58,24 @@ pub async fn upload(
 
     let mut uploaded = vec![];
     while let Ok(Some(field)) = multipart.next_field().await {
-        let filename = field
-            .file_name()
-            .unwrap_or("upload.txt")
-            .to_string();
-        let data = field.bytes().await.map_err(|e| {
-            (StatusCode::BAD_REQUEST, json_error(e.to_string()))
-        })?;
+        let filename = field.file_name().unwrap_or("upload.txt").to_string();
+        let data = field
+            .bytes()
+            .await
+            .map_err(|e| (StatusCode::BAD_REQUEST, json_error(e.to_string())))?;
         let safe_name: String = filename
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         let dest = dir.join(&safe_name);
-        std::fs::write(&dest, &data).map_err(|e| {
-            (StatusCode::INTERNAL_SERVER_ERROR, json_error(e.to_string()))
-        })?;
+        std::fs::write(&dest, &data)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, json_error(e.to_string())))?;
         uploaded.push(safe_name);
     }
 
@@ -133,8 +136,6 @@ pub async fn clear_history(
             json_error("Qdrant not configured"),
         )
     })?;
-    tokio::task::spawn_blocking(move || {
-        crate::history::clear_history(&rag.qdrant_url, &node_id)
-    });
+    tokio::task::spawn_blocking(move || crate::history::clear_history(&rag.qdrant_url, &node_id));
     Ok(StatusCode::NO_CONTENT)
 }

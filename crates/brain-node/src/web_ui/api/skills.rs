@@ -40,9 +40,9 @@ pub async fn test(
                     match llm.ask(&query) {
                         Ok(resp) => {
                             let action = resp.action.unwrap_or_else(|| "respond".to_string());
-                            let mut params = resp.params.unwrap_or(
-                                serde_json::Value::Object(Default::default()),
-                            );
+                            let mut params = resp
+                                .params
+                                .unwrap_or(serde_json::Value::Object(Default::default()));
                             params["response"] = serde_json::Value::String(resp.response);
                             let result = skills.dispatch(&action, &params);
                             Ok(serde_json::json!({
@@ -64,5 +64,7 @@ pub async fn test(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, json_error(e.to_string())))?;
 
-    result.map(Json).map_err(|e| (StatusCode::BAD_GATEWAY, json_error(e)))
+    result
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, json_error(e)))
 }

@@ -110,11 +110,18 @@ fn load_model_settings(config_dir: &std::path::Path) -> ModelSettings {
 pub enum TrainingStatus {
     #[default]
     Idle,
-    Running { progress: u8, message: String },
-    Complete { accuracy: f32, model_path: String },
-    Failed { error: String },
+    Running {
+        progress: u8,
+        message: String,
+    },
+    Complete {
+        accuracy: f32,
+        model_path: String,
+    },
+    Failed {
+        error: String,
+    },
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WakeSample {
@@ -267,10 +274,7 @@ pub fn make_router(state: AppState) -> Router {
             "/ui/training/wake-word",
             get(pages::training::wake_word_handler),
         )
-        .route(
-            "/ui/training/voice",
-            get(pages::training::voice_handler),
-        )
+        .route("/ui/training/voice", get(pages::training::voice_handler))
         // SSE streams
         .route("/events/nodes", get(sse::nodes_handler))
         .route(
@@ -284,18 +288,23 @@ pub fn make_router(state: AppState) -> Router {
         )
         // API — nodes
         .route("/api/nodes", get(api::nodes::list))
-        .route("/api/nodes/pair", axum::routing::post(api::nodes::confirm_pair))
+        .route(
+            "/api/nodes/pair",
+            axum::routing::post(api::nodes::confirm_pair),
+        )
         .route(
             "/api/nodes/:id",
-            axum::routing::delete(api::nodes::unpair)
-                .patch(api::nodes::rename),
+            axum::routing::delete(api::nodes::unpair).patch(api::nodes::rename),
         )
         // API — documents
         .route(
             "/api/documents",
             get(api::documents::list).post(api::documents::upload),
         )
-        .route("/api/documents/ingest", axum::routing::post(api::documents::trigger_ingest))
+        .route(
+            "/api/documents/ingest",
+            axum::routing::post(api::documents::trigger_ingest),
+        )
         .route(
             "/api/history/:node_id",
             axum::routing::delete(api::documents::clear_history),
@@ -327,8 +336,7 @@ pub fn make_router(state: AppState) -> Router {
         // API — wake word training
         .route(
             "/api/training/wake-word/samples",
-            get(api::training::list_wake_samples)
-                .post(api::training::upload_wake_sample),
+            get(api::training::list_wake_samples).post(api::training::upload_wake_sample),
         )
         .route(
             "/api/training/wake-word/samples/:id",
@@ -345,8 +353,7 @@ pub fn make_router(state: AppState) -> Router {
         // API — voice training
         .route(
             "/api/training/voice/users",
-            get(api::training::list_voice_users)
-                .post(api::training::create_voice_user),
+            get(api::training::list_voice_users).post(api::training::create_voice_user),
         )
         .route(
             "/api/training/voice/users/:id",
@@ -377,21 +384,14 @@ async fn serve_css() -> impl IntoResponse {
 
 async fn serve_js() -> impl IntoResponse {
     (
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "application/javascript",
-        )],
+        [(axum::http::header::CONTENT_TYPE, "application/javascript")],
         include_str!("static/app.js"),
     )
 }
 
 // ── Template rendering helper ──────────────────────────────────────────────────
 
-pub fn render(
-    state: &AppState,
-    template: &str,
-    ctx: minijinja::Value,
-) -> AppResult<Html<String>> {
+pub fn render(state: &AppState, template: &str, ctx: minijinja::Value) -> AppResult<Html<String>> {
     let tmpl = state
         .env
         .get_template(template)

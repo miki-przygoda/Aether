@@ -56,10 +56,7 @@ pub async fn confirm_pair(
     })))
 }
 
-pub async fn unpair(
-    Path(node_id): Path<String>,
-    State(state): State<AppState>,
-) -> StatusCode {
+pub async fn unpair(Path(node_id): Path<String>, State(state): State<AppState>) -> StatusCode {
     state.registry.unregister(&node_id).await;
     tracing::info!(node_id = %node_id, "node unpaired via web UI");
     StatusCode::NO_CONTENT

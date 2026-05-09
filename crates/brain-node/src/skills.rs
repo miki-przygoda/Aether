@@ -34,16 +34,48 @@ impl SkillRegistry {
     /// Used by the web UI skills page and the skill-tester API.
     pub fn list(&self) -> Vec<SkillInfo> {
         static DESCRIPTIONS: &[(&str, &str, &[&str])] = &[
-            ("lights_off", "Turn off the lights", &["lights off", "turn off the lights"]),
-            ("lights_on", "Turn on the lights", &["lights on", "turn on the lights"]),
-            ("pause_music", "Pause music playback", &["pause", "pause music"]),
-            ("play_music", "Start music playback", &["play music", "play something"]),
-            ("respond", "General conversation / fallback", &["what time is it?", "tell me a joke"]),
-            ("set_timer", "Set a countdown timer", &["set a timer for 5 minutes", "timer 30 seconds"]),
+            (
+                "lights_off",
+                "Turn off the lights",
+                &["lights off", "turn off the lights"],
+            ),
+            (
+                "lights_on",
+                "Turn on the lights",
+                &["lights on", "turn on the lights"],
+            ),
+            (
+                "pause_music",
+                "Pause music playback",
+                &["pause", "pause music"],
+            ),
+            (
+                "play_music",
+                "Start music playback",
+                &["play music", "play something"],
+            ),
+            (
+                "respond",
+                "General conversation / fallback",
+                &["what time is it?", "tell me a joke"],
+            ),
+            (
+                "set_timer",
+                "Set a countdown timer",
+                &["set a timer for 5 minutes", "timer 30 seconds"],
+            ),
             ("stop_music", "Stop music playback", &["stop music", "stop"]),
-            ("volume_down", "Decrease the volume", &["volume down", "quieter"]),
+            (
+                "volume_down",
+                "Decrease the volume",
+                &["volume down", "quieter"],
+            ),
             ("volume_up", "Increase the volume", &["volume up", "louder"]),
-            ("weather", "Report the current weather", &["what's the weather?", "is it raining?"]),
+            (
+                "weather",
+                "Report the current weather",
+                &["what's the weather?", "is it raining?"],
+            ),
         ];
         let mut infos: Vec<SkillInfo> = self
             .skills

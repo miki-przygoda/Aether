@@ -13,13 +13,13 @@ pub async fn list_handler(State(state): State<AppState>) -> AppResult<Html<Strin
             })
         })
         .collect();
-    render(&state, "nodes.html", context! { active => "nodes", nodes => nodes })
+    render(
+        &state,
+        "nodes.html",
+        context! { active => "nodes", nodes => nodes },
+    )
 }
 
 pub async fn pair_handler(State(state): State<AppState>) -> AppResult<Html<String>> {
-    render(
-        &state,
-        "nodes_pair.html",
-        context! { active => "nodes" },
-    )
+    render(&state, "nodes_pair.html", context! { active => "nodes" })
 }
