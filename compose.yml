@@ -7,10 +7,48 @@ services:
       - "50052:50052"  # Pairing port — plain gRPC, wired connection only
     volumes:
       - aether-certs:/data/certs
+      - ./models:/models:ro  # model weights — run scripts/download-models.sh first
     environment:
       BRAIN_GRPC_PORT: "50051"
       BRAIN_PAIR_PORT: "50052"
       BRAIN_CERTS_DIR: /data/certs
+      WHISPER_MODEL_PATH: /models/whisper/ggml-medium.bin
+      WHISPER_FALLBACK_MODEL_PATH: /models/whisper/distil-large-v3.bin
+      WHISPER_CONFIDENCE_THRESHOLD: "0.75"
+      KOKORO_MODEL_PATH: /models/tts/kokoro-82m.onnx
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLM_FAST_MODEL: llama3.2:3b
+      ORT_DYLIB_PATH: /usr/local/lib/libonnxruntime.so
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    ports:
+      - "11434:11434"
+    environment:
+      OLLAMA_KEEP_ALIVE: 24h
+      LLM_FAST_MODEL: llama3.2:3b
+    # Pull the configured model on first boot if not already cached.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        until ollama list >/dev/null 2>&1; do sleep 2; done
+        if ! ollama list | grep -q "$${LLM_FAST_MODEL:-llama3.2:3b}"; then
+          ollama pull "$${LLM_FAST_MODEL:-llama3.2:3b}"
+        fi
+        wait
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
 
 volumes:
   aether-certs:
@@ -22,3 +60,7 @@ volumes:
     #
     # WARNING: removing this volume invalidates all paired edge node certs.
     # Every Pi will need to be re-paired if the volume is deleted.
+
+  ollama-data:
+    # Named volume — caches Ollama model weights across restarts.
+    # Delete to force a re-download of all Ollama models.
