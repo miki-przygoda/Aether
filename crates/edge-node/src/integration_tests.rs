@@ -1,7 +1,7 @@
 use crate::brain_conn::{
     proto::{
         aether_brain_server::{AetherBrain, AetherBrainServer},
-        AudioChunk, BrainResponse, PairRequest, PairResponse,
+        brain_response, AudioChunk, BrainResponse, PairRequest, PairResponse, TtsChunk,
     },
     stream_audio,
 };
@@ -112,4 +112,98 @@ async fn wake_word_trigger_opens_stream_and_delivers_pcm() {
         .expect("count channel closed unexpectedly");
 
     assert_eq!(received, 3, "brain should receive all 3 PCM chunks");
+}
+
+// ─── TTS dispatch test ────────────────────────────────────────────────────────
+
+/// Mock brain that sends a TtsChunk back as soon as the stream closes.
+struct MockBrainWithTts {
+    ready_tx: mpsc::Sender<()>,
+}
+
+#[tonic::async_trait]
+impl AetherBrain for MockBrainWithTts {
+    type AudioStreamStream = ReceiverStream<Result<BrainResponse, Status>>;
+
+    async fn audio_stream(
+        &self,
+        request: Request<Streaming<AudioChunk>>,
+    ) -> Result<Response<Self::AudioStreamStream>, Status> {
+        let ready_tx = self.ready_tx.clone();
+        let mut stream = request.into_inner();
+        let (resp_tx, resp_rx) = mpsc::channel::<Result<BrainResponse, Status>>(4);
+
+        tokio::spawn(async move {
+            // Drain the PCM stream.
+            while let Ok(Some(_)) = stream.message().await {}
+
+            // Send a minimal TtsChunk (silence, so play_wav can parse the WAV
+            // header even if no audio device is available).
+            let wav = crate::playback::tests::make_wav_silence(100, 24_000);
+            let _ = resp_tx
+                .send(Ok(BrainResponse {
+                    payload: Some(brain_response::Payload::TtsAudio(TtsChunk { wav })),
+                }))
+                .await;
+
+            // Signal that the chunk was sent, then close the stream.
+            let _ = ready_tx.send(()).await;
+            drop(resp_tx);
+        });
+
+        Ok(Response::new(ReceiverStream::new(resp_rx)))
+    }
+
+    async fn pair(&self, _: Request<PairRequest>) -> Result<Response<PairResponse>, Status> {
+        Err(Status::unimplemented("not used in this test"))
+    }
+}
+
+/// Verifies that stream_audio correctly receives a TtsChunk and invokes playback
+/// without panicking — even when no audio device is available (CI headless).
+#[tokio::test]
+async fn tts_chunk_received_and_dispatched() {
+    let (ready_tx, mut ready_rx) = mpsc::channel::<()>(1);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(
+        Server::builder()
+            .add_service(AetherBrainServer::new(MockBrainWithTts { ready_tx }))
+            .serve_with_incoming(TcpListenerStream::new(listener)),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+
+    let channel = tonic::transport::Channel::from_shared(format!("http://{addr}"))
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+
+    let (pcm_tx, pcm_rx) = mpsc::channel::<Vec<f32>>(4);
+
+    let stream_result =
+        tokio::spawn(async move { stream_audio(channel, "tts-test-pi", pcm_rx).await });
+
+    // Send one chunk then close.
+    pcm_tx.send(vec![0.0f32; 512]).await.unwrap();
+    drop(pcm_tx);
+
+    // Wait for the server to confirm the TtsChunk was sent.
+    tokio::time::timeout(std::time::Duration::from_secs(5), ready_rx.recv())
+        .await
+        .expect("timed out waiting for TTS chunk to be sent")
+        .expect("ready channel closed");
+
+    // stream_audio must complete without error (playback error is logged, not propagated).
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), stream_result)
+        .await
+        .expect("stream_audio timed out")
+        .expect("task panicked");
+
+    assert!(
+        result.is_ok(),
+        "stream_audio should not propagate TTS errors: {result:?}"
+    );
 }

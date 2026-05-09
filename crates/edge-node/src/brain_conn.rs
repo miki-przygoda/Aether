@@ -9,7 +9,7 @@ pub mod proto {
     tonic::include_proto!("aether");
 }
 
-use proto::{aether_brain_client::AetherBrainClient, AudioChunk, PairRequest};
+use proto::{aether_brain_client::AetherBrainClient, brain_response, AudioChunk, PairRequest};
 
 /// Stored configuration written to disk during pairing.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -157,9 +157,26 @@ pub async fn stream_audio(
 
     let mut response = client.audio_stream(request).await?.into_inner();
 
-    // Drain responses (Phase 2+ will route these to TTS / GPIO).
     while let Some(msg) = response.message().await? {
-        tracing::debug!(?msg, "brain response received (unhandled in Phase 1)");
+        match msg.payload {
+            Some(brain_response::Payload::Transcript(t)) => {
+                tracing::info!(text = %t.text, confidence = t.confidence, "transcript");
+            }
+            Some(brain_response::Payload::Action(a)) => {
+                tracing::info!(action = %a.action, params = %a.params_json, "skill action");
+            }
+            Some(brain_response::Payload::TtsAudio(chunk)) => {
+                tracing::info!(bytes = chunk.wav.len(), "TTS audio received — playing");
+                if let Err(e) =
+                    tokio::task::spawn_blocking(move || crate::playback::play_wav(&chunk.wav))
+                        .await
+                        .expect("playback task panicked")
+                {
+                    tracing::warn!("TTS playback error: {e}");
+                }
+            }
+            None => {}
+        }
     }
 
     Ok(())
