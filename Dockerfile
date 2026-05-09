@@ -20,16 +20,21 @@ RUN curl -fsSL \
     --wildcards "*/lib/libonnxruntime.so*" "*/lib/libonnxruntime_providers_shared.so"
 
 # ── Stage 2: build brain-node binary ─────────────────────────────────────────
-FROM rust:1.85-slim-bookworm AS builder
+FROM rust:1.88-slim-bookworm AS builder
 
 # cmake + build-essential compile whisper.cpp (whisper-rs build.rs).
 # protobuf-compiler generates gRPC stubs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         cmake \
         build-essential \
+        clang \
         protobuf-compiler \
         pkg-config \
+        libssl-dev \
+        libclang-dev \
     && rm -rf /var/lib/apt/lists/*
+
+ENV CC=clang CXX=clang++
 
 WORKDIR /build
 

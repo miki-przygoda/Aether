@@ -2,5 +2,8 @@ target/
 .git/
 private/
 todos/
+models/
+documents/
+finetuning/
 *.md
 !proto/
