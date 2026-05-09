@@ -5,14 +5,18 @@ services:
     ports:
       - "50051:50051"  # mTLS gRPC — edge nodes connect here after pairing
       - "50052:50052"  # Pairing port — plain gRPC, wired connection only
+      - "8080:8080"    # Web configuration UI — local network only
     volumes:
       - aether-certs:/data/certs
+      - aether-config:/data/config
       - ./models:/models:ro
       - ./documents:/documents:ro  # user corpus — files here are indexed into Qdrant
     environment:
       BRAIN_GRPC_PORT: "50051"
       BRAIN_PAIR_PORT: "50052"
+      BRAIN_WEB_PORT: "8080"
       BRAIN_CERTS_DIR: /data/certs
+      BRAIN_CONFIG_DIR: /data/config
       WHISPER_MODEL_PATH: /models/whisper/ggml-medium.bin
       WHISPER_FALLBACK_MODEL_PATH: /models/whisper/distil-large-v3.bin
       WHISPER_CONFIDENCE_THRESHOLD: "0.75"
@@ -24,11 +28,22 @@ services:
       QDRANT_URL: http://qdrant:6334
       HISTORY_TURNS: "10"
       DOCUMENTS_DIR: /documents
+      FINETUNING_URL: http://finetuning:8000
     depends_on:
       ollama:
         condition: service_healthy
       qdrant:
         condition: service_healthy
+
+  finetuning:
+    build: ./finetuning
+    restart: "no"  # started on-demand by training jobs, not kept running
+    volumes:
+      - aether-config:/data/config
+    environment:
+      CONFIG_DIR: /data/config
+    profiles:
+      - training  # only starts when explicitly requested: docker compose --profile training up finetuning
 
   ollama:
     image: ollama/ollama:latest
@@ -85,6 +100,11 @@ volumes:
     #
     # WARNING: removing this volume invalidates all paired edge node certs.
     # Every Pi will need to be re-paired if the volume is deleted.
+
+  aether-config:
+    # Named volume — persists web UI configuration across restarts.
+    # Contains TTS settings, model settings, wake word samples and models,
+    # voice training samples and user profiles.
 
   ollama-data:
     # Named volume — caches Ollama model weights across restarts.
