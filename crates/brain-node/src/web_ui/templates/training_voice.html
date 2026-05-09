@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Voice Training — Aether{% endblock %}
+{% block heading %}Voice Personalisation{% endblock %}
+
+{% block content %}
+{% if not finetuning_available %}
+<div class="alert alert-warn">Finetuning service not configured. Set FINETUNING_URL to enable voice personalisation.</div>
+{% endif %}
+
+<div class="toolbar" style="margin-bottom:1rem">
+  <button class="btn" onclick="showNewUserForm()">Add user profile</button>
+</div>
+
+<div id="new-user-form" style="display:none;margin-bottom:1rem" class="card" style="max-width:400px">
+  <h2>New User Profile</h2>
+  <label class="field">Name <input id="new-user-name" type="text" placeholder="e.g. Alice"></label>
+  <div style="margin-top:.75rem;display:flex;gap:.5rem">
+    <button class="btn" onclick="createUser()">Create</button>
+    <button class="btn btn-secondary" onclick="hideNewUserForm()">Cancel</button>
+  </div>
+</div>
+
+{% if users %}
+<div class="cards">
+  {% for user in users %}
+  <div class="card" id="user-{{ user.id }}">
+    <div class="card-header">
+      <strong>{{ user.name }}</strong>
+      {% if user.trained %}<span class="badge badge-idle">Trained</span>{% endif %}
+    </div>
+    <p class="muted">{{ user.sample_count }} sample(s) recorded</p>
+    {% if user.trained_at %}<p class="muted tiny">Trained: {{ user.trained_at }}</p>{% endif %}
+    <div style="margin-top:1rem;display:flex;flex-wrap:wrap;gap:.5rem">
+      <button class="btn btn-sm" onclick="openRecordWizard('{{ user.id }}', '{{ user.name }}')">Record samples</button>
+      {% if finetuning_available %}
+      <button class="btn btn-sm btn-secondary" onclick="trainUser('{{ user.id }}')">Fine-tune</button>
+      {% endif %}
+      <button class="btn btn-sm btn-danger" onclick="deleteUser('{{ user.id }}')">Delete</button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="muted">No user profiles yet. Add one above.</p>
+{% endif %}
+
+<!-- Recording wizard modal -->
+<div id="record-modal" style="display:none" class="modal-backdrop">
+  <div class="modal">
+    <h2 id="modal-title">Record samples</h2>
+    <p>Read each prompt aloud clearly, then press Stop.</p>
+
+    <div id="prompt-display" class="prompt-box"></div>
+    <p id="prompt-counter" class="muted"></p>
+
+    <div class="record-controls" style="margin-top:1rem">
+      <button class="btn" id="modal-record-btn" onclick="toggleModalRecord()">⏺ Record</button>
+    </div>
+
+    <div class="progress" style="margin-top:.75rem"><div class="progress-fill" id="modal-progress" style="width:0%"></div></div>
+
+    <div style="margin-top:1.5rem;display:flex;gap:.75rem">
+      <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Fine-tune progress -->
+<div id="ft-progress" style="display:none;margin-top:1.5rem" class="card">
+  <h2>Fine-tuning in progress</h2>
+  <div class="progress"><div class="progress-fill" id="ft-fill" style="width:0%"></div></div>
+  <p id="ft-msg" class="muted"></p>
+</div>
+
+<script>
+const PROMPTS = [
+  "Set a timer for fifteen minutes",
+  "What's the weather like outside today?",
+  "Play some focus music in the background",
+  "Turn off the office lights and close the blinds",
+  "Remind me to take a break every hour",
+  "How many cups are in a gallon?",
+  "What time is it?",
+  "Tell me a short joke",
+  "Volume up, please",
+  "Set an alarm for seven in the morning",
+  "What's on my schedule today?",
+  "Play something relaxing",
+  "Turn on the living room lights",
+  "How long until sunset?",
+  "Add milk to my shopping list",
+  "What's the latest news?",
+  "Stop the music",
+  "Set volume to fifty percent",
+  "How many days until the weekend?",
+  "Is it going to rain tomorrow?",
+  "Turn off all the lights",
+  "Call home",
+  "What temperature is it outside?",
+  "Pause the music for a moment",
+  "Good morning, what do I have planned?",
+];
+
+let currentUserId = null, modalRecording = false, modalMediaRecorder = null, modalAudioChunks = [];
+let promptIndex = 0;
+
+function showNewUserForm() { document.getElementById('new-user-form').style.display = 'block'; }
+function hideNewUserForm() { document.getElementById('new-user-form').style.display = 'none'; }
+
+async function createUser() {
+  const name = document.getElementById('new-user-name').value.trim();
+  if (!name) return;
+  const resp = await fetch('/api/training/voice/users', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (resp.ok) location.reload();
+}
+
+async function deleteUser(id) {
+  if (!confirm('Delete this user profile?')) return;
+  const resp = await fetch('/api/training/voice/users/' + id, { method: 'DELETE' });
+  if (resp.ok) document.getElementById('user-' + id)?.remove();
+}
+
+function openRecordWizard(userId, userName) {
+  currentUserId = userId;
+  promptIndex = 0;
+  document.getElementById('modal-title').textContent = 'Record samples — ' + userName;
+  showPrompt();
+  document.getElementById('record-modal').style.display = 'flex';
+}
+
+function closeModal() { document.getElementById('record-modal').style.display = 'none'; }
+
+function showPrompt() {
+  document.getElementById('prompt-display').textContent = PROMPTS[promptIndex] || 'All prompts recorded!';
+  document.getElementById('prompt-counter').textContent = (promptIndex + 1) + ' / ' + PROMPTS.length;
+  document.getElementById('modal-progress').style.width = (promptIndex / PROMPTS.length * 100) + '%';
+}
+
+async function toggleModalRecord() {
+  if (modalRecording) {
+    modalMediaRecorder.stop();
+    return;
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  modalMediaRecorder = new MediaRecorder(stream);
+  modalAudioChunks = [];
+  modalMediaRecorder.ondataavailable = e => modalAudioChunks.push(e.data);
+  modalMediaRecorder.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    modalRecording = false;
+    document.getElementById('modal-record-btn').textContent = '⏺ Record';
+    const blob = new Blob(modalAudioChunks, { type: 'audio/wav' });
+    const form = new FormData();
+    form.append('wav', blob, 'prompt.wav');
+    form.append('user_id', currentUserId);
+    form.append('transcript', PROMPTS[promptIndex]);
+    await fetch('/api/training/voice/samples', { method: 'POST', body: form });
+    promptIndex = Math.min(promptIndex + 1, PROMPTS.length - 1);
+    showPrompt();
+  };
+  modalMediaRecorder.start();
+  modalRecording = true;
+  document.getElementById('modal-record-btn').textContent = '⏹ Stop';
+}
+
+async function trainUser(userId) {
+  const panel = document.getElementById('ft-progress');
+  panel.style.display = 'block';
+  const es = new EventSource('/events/training/voice');
+  es.onmessage = function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      document.getElementById('ft-fill').style.width = data.percent + '%';
+      document.getElementById('ft-msg').textContent = data.message;
+      if (data.done) { es.close(); setTimeout(() => location.reload(), 1500); }
+    } catch (_) {}
+  };
+  await fetch('/api/training/voice/train', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId }),
+  });
+}
+</script>
+{% endblock %}

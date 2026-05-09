@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Aether{% endblock %}
+{% block heading %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="cards">
+  {% for node in nodes %}
+  <div class="card node-card" id="node-{{ node.node_id }}">
+    <div class="card-header">
+      <span class="status-dot state-{{ node.state | lower }}"></span>
+      <strong>{{ node.node_id }}</strong>
+    </div>
+    <p class="state-label">{{ node.state }}</p>
+  </div>
+  {% else %}
+  <div class="card empty-card">
+    <p>No nodes connected.</p>
+    <a href="/ui/nodes/pair" class="btn">Pair a node</a>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+(function() {
+  const es = new EventSource('/events/nodes');
+  es.onmessage = function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      const card = document.getElementById('node-' + data.node_id);
+      if (!card) return;
+      const dot = card.querySelector('.status-dot');
+      const label = card.querySelector('.state-label');
+      dot.className = 'status-dot state-' + data.state.toLowerCase();
+      label.textContent = data.state;
+    } catch (_) {}
+  };
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}TTS Settings — Aether{% endblock %}
+{% block heading %}TTS Settings{% endblock %}
+
+{% block content %}
+{% if not tts_enabled %}
+<div class="alert alert-warn">TTS is not configured. Set KOKORO_MODEL_PATH to enable synthesis.</div>
+{% endif %}
+
+<form id="tts-form" class="card" style="max-width:480px">
+  <label class="field">
+    <span>Speed <span class="val-display" id="speed-display">{{ speed }}×</span></span>
+    <input type="range" id="speed" name="speed" min="0.5" max="2.0" step="0.05" value="{{ speed }}"
+           oninput="document.getElementById('speed-display').textContent = (+this.value).toFixed(2) + '×'">
+  </label>
+
+  <label class="field" style="margin-top:1rem">
+    <span>Voice</span>
+    <select id="voice" name="voice">
+      <option value="default" {% if voice == "default" %}selected{% endif %}>Default</option>
+    </select>
+  </label>
+
+  <div class="field" style="margin-top:1.5rem">
+    <span>Preview</span>
+    <textarea id="preview-text" rows="2" placeholder="Type something to hear…">Hello, I am Aether, your local voice assistant.</textarea>
+    <button type="button" class="btn btn-secondary" style="margin-top:.5rem" onclick="playPreview()">▶ Play preview</button>
+    <audio id="preview-audio" style="display:none;margin-top:.5rem;width:100%"></audio>
+  </div>
+
+  <div style="margin-top:1.5rem;display:flex;gap:.75rem">
+    <button type="submit" class="btn">Save</button>
+    <span id="save-msg" style="display:none;align-self:center;color:var(--green)">Saved!</span>
+  </div>
+</form>
+
+<script>
+document.getElementById('tts-form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const body = {
+    speed: parseFloat(document.getElementById('speed').value),
+    voice: document.getElementById('voice').value,
+  };
+  const resp = await fetch('/api/settings/tts', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (resp.ok) {
+    const msg = document.getElementById('save-msg');
+    msg.style.display = 'inline';
+    setTimeout(() => msg.style.display = 'none', 2000);
+  } else {
+    alert('Save failed');
+  }
+});
+
+async function playPreview() {
+  const body = {
+    text: document.getElementById('preview-text').value,
+    speed: parseFloat(document.getElementById('speed').value),
+    voice: document.getElementById('voice').value,
+  };
+  const resp = await fetch('/api/settings/tts/preview', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) { alert('TTS preview failed'); return; }
+  const blob = await resp.blob();
+  const audio = document.getElementById('preview-audio');
+  audio.src = URL.createObjectURL(blob);
+  audio.style.display = 'block';
+  audio.play();
+}
+</script>
+{% endblock %}
