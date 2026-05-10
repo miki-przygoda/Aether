@@ -4,24 +4,39 @@
 
 {% block content %}
 {% if not setup_complete %}
-<div class="alert" style="background:var(--bg3);border:1px solid var(--border);margin-bottom:1.5rem;display:flex;align-items:center;justify-content:space-between;gap:1rem">
-  <span>⚡ Finish setting up your Aether system — pair a node, train the wake word, and go live.</span>
-  <a href="/ui/setup" class="btn btn-sm">Continue setup →</a>
+<div class="alert" style="background:var(--bg2);border:1px solid var(--border);margin-bottom:1.75rem;display:flex;align-items:center;justify-content:space-between;gap:1rem">
+  <div style="display:flex;align-items:center;gap:.6rem">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    <span>Finish setting up your Aether system — pair a node, train the wake word, and go live.</span>
+  </div>
+  <a href="/ui/setup" class="btn btn-sm" style="flex-shrink:0">Continue setup →</a>
 </div>
 {% endif %}
+
 <div class="cards">
   {% for node in nodes %}
-  <div class="card node-card{% if not node.online %} node-offline{% endif %}" id="node-{{ node.node_id }}">
-    <div class="card-header">
-      <span class="status-dot state-{{ node.state | lower }}"></span>
-      <strong>{{ node.node_id }}</strong>
-      {% if not node.online %}<span class="badge badge-offline" style="margin-left:auto">Offline</span>{% endif %}
+  <div class="card node-card state-{{ node.state | lower }}{% if not node.online %} node-offline{% endif %}" id="node-{{ node.node_id }}">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem;margin-bottom:.75rem">
+      <span class="node-id">{{ node.node_id }}</span>
+      {% if not node.online %}
+        <span class="badge badge-offline">Offline</span>
+      {% else %}
+        <span class="badge badge-online">Online</span>
+      {% endif %}
     </div>
-    <p class="state-label">{{ node.state }}</p>
+
+    <div class="node-state-row">
+      <div style="display:flex;align-items:center;gap:.5rem">
+        <span class="status-dot state-{{ node.state | lower }}"></span>
+        <span class="state-label" style="font-size:.82rem;color:var(--muted)">{{ node.state }}</span>
+      </div>
+      <span class="badge badge-{{ node.state | lower }}">{{ node.state }}</span>
+    </div>
   </div>
   {% else %}
-  <div class="card empty-card">
-    <p>No paired nodes.</p>
+  <div class="card empty-card" style="grid-column:1/-1;padding:2rem;text-align:center">
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto .75rem"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+    <p style="margin-bottom:1rem;color:var(--muted)">No paired nodes yet.</p>
     <a href="/ui/nodes/pair" class="btn">Pair a node</a>
   </div>
   {% endfor %}
@@ -35,13 +50,21 @@
       const data = JSON.parse(e.data);
       const card = document.getElementById('node-' + data.node_id);
       if (!card) return;
+      const state = data.state.toLowerCase();
       const dot = card.querySelector('.status-dot');
       const label = card.querySelector('.state-label');
-      dot.className = 'status-dot state-' + data.state.toLowerCase();
+      const badge = card.querySelector('.badge:last-child');
+
+      // update state class on card
+      card.className = card.className.replace(/state-\S+/, 'state-' + state);
+      dot.className = 'status-dot state-' + state;
       label.textContent = data.state;
+      badge.className = 'badge badge-' + state;
+      badge.textContent = data.state;
+
       card.classList.remove('node-offline');
       const offlineBadge = card.querySelector('.badge-offline');
-      if (offlineBadge) offlineBadge.remove();
+      if (offlineBadge) { offlineBadge.className = 'badge badge-online'; offlineBadge.textContent = 'Online'; }
     } catch (_) {}
   };
 })();

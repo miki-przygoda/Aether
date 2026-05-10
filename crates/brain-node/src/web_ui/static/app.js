@@ -5,9 +5,8 @@
 // Flash a banner at the top of the page.
 function flashBanner(msg, type) {
   const el = document.createElement('div');
-  el.className = 'alert alert-' + (type || 'success');
+  el.className = 'alert alert-' + (type || 'success') + ' flash-banner';
   el.textContent = msg;
-  el.style.cssText = 'position:fixed;top:1rem;right:1rem;z-index:999;max-width:320px';
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 3500);
 }
