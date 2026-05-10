@@ -43,6 +43,7 @@ pub struct RagConfig {
 pub struct BrainService {
     pub registry: SessionRegistry,
     pub certs_dir: std::path::PathBuf,
+    pub config_dir: std::path::PathBuf,
     pub stt: Option<Arc<dyn SpeechToText>>,
     pub trie: Arc<CommandTrie>,
     pub llm: Option<Arc<dyn LlmClient>>,
@@ -276,6 +277,7 @@ impl AetherBrain for BrainService {
         let issued = crate::pair::issue_client_cert(&node_id, &ca_key)
             .map_err(|e| Status::internal(format!("cert issuance: {e}")))?;
 
+        crate::web_ui::register_paired_node(&self.config_dir, &node_id);
         tracing::info!(node_id = %node_id, "client cert issued");
 
         Ok(Response::new(PairResponse {

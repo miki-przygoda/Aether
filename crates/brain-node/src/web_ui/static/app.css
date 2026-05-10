@@ -145,6 +145,9 @@ body {
 .badge-processing { background: rgba(224,160,48,.15); color: var(--yellow); }
 .badge-error { background: rgba(224,93,93,.15); color: var(--red); }
 .badge-indexed { background: rgba(76,175,125,.15); color: var(--green); }
+.badge-online { background: rgba(76,175,125,.15); color: var(--green); }
+.badge-offline { background: var(--bg3); color: var(--muted); }
+.muted { color: var(--muted); font-size: .88rem; }
 
 /* ── Buttons ── */
 .btn {

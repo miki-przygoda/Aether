@@ -120,6 +120,9 @@ enum Command {
 
         #[arg(long, env = "BRAIN_CERTS_DIR", default_value = "/data/certs")]
         certs_dir: PathBuf,
+
+        #[arg(long, env = "BRAIN_CONFIG_DIR", default_value = "/data/config")]
+        config_dir: PathBuf,
     },
 
     /// Generate synthetic wake-word WAV samples via Kokoro TTS.
@@ -197,7 +200,7 @@ async fn run() -> Result<()> {
             })
             .await
         }
-        Command::Pair { port, certs_dir } => run_pair_server(port, certs_dir).await,
+        Command::Pair { port, certs_dir, config_dir } => run_pair_server(port, certs_dir, config_dir).await,
         Command::GenerateWakeWordSamples {
             kokoro_model,
             output_dir,
@@ -387,7 +390,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         trie.clone(),
         rag_config.clone(),
         certs_dir.clone(),
-        config_dir,
+        config_dir.clone(),
         documents_dir,
         ollama_url_for_ui,
         finetuning_url,
@@ -397,6 +400,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let service = BrainService {
         registry,
         certs_dir,
+        config_dir,
         stt: stt_engine,
         trie,
         llm: llm_engine,
@@ -478,14 +482,16 @@ fn generate_wake_word_samples(
     Ok(())
 }
 
-async fn run_pair_server(port: u16, certs_dir: PathBuf) -> Result<()> {
+async fn run_pair_server(port: u16, certs_dir: PathBuf, config_dir: PathBuf) -> Result<()> {
     let local_ip = local_ip_address::local_ip().context("detecting local IP")?;
     pair::ensure_certs(&certs_dir, local_ip).context("ensuring certs")?;
+    std::fs::create_dir_all(&config_dir).context("creating config dir")?;
 
     let addr: SocketAddr = ([0, 0, 0, 0], port).into();
     let service = BrainService {
         registry: SessionRegistry::new(),
         certs_dir,
+        config_dir,
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,

@@ -103,6 +103,46 @@ fn load_model_settings(config_dir: &std::path::Path) -> ModelSettings {
         .unwrap_or_default()
 }
 
+// ── Paired-node registry ───────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairedNode {
+    pub node_id: String,
+    pub paired_at: String,
+}
+
+pub fn load_paired_nodes(config_dir: &std::path::Path) -> Vec<PairedNode> {
+    let path = config_dir.join("paired_nodes.json");
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_paired_nodes(config_dir: &std::path::Path, nodes: &[PairedNode]) {
+    let path = config_dir.join("paired_nodes.json");
+    if let Ok(json) = serde_json::to_string_pretty(nodes) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+pub fn register_paired_node(config_dir: &std::path::Path, node_id: &str) {
+    let mut nodes = load_paired_nodes(config_dir);
+    if !nodes.iter().any(|n| n.node_id == node_id) {
+        nodes.push(PairedNode {
+            node_id: node_id.to_string(),
+            paired_at: chrono::Utc::now().to_rfc3339(),
+        });
+        save_paired_nodes(config_dir, &nodes);
+    }
+}
+
+pub fn remove_paired_node(config_dir: &std::path::Path, node_id: &str) {
+    let mut nodes = load_paired_nodes(config_dir);
+    nodes.retain(|n| n.node_id != node_id);
+    save_paired_nodes(config_dir, &nodes);
+}
+
 // ── Domain types ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
