@@ -107,6 +107,42 @@ function goStep(n) {
   if (n === 3) loadReview();
 }
 
+// Encode Float32Array PCM samples as a 16-bit mono WAV Blob.
+function encodeWav(samples, sampleRate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const v = new DataView(buf);
+  const str = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true);
+  str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, samples.length * 2, true);
+  let off = 44;
+  for (let i = 0; i < samples.length; i++, off += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+// Decode WebM/Opus blob → resample to 16 kHz mono → WAV Blob.
+async function webmToWav(webmBlob) {
+  const TARGET_SR = 16000;
+  const ab = await webmBlob.arrayBuffer();
+  const tmpCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const decoded = await tmpCtx.decodeAudioData(ab);
+  await tmpCtx.close();
+  const numOut = Math.ceil(decoded.duration * TARGET_SR);
+  const offCtx = new OfflineAudioContext(1, numOut, TARGET_SR);
+  const src = offCtx.createBufferSource();
+  src.buffer = decoded;
+  src.connect(offCtx.destination);
+  src.start(0);
+  const rendered = await offCtx.startRendering();
+  return encodeWav(rendered.getChannelData(0), TARGET_SR);
+}
+
 async function toggleRecord() {
   if (recording) {
     mediaRecorder.stop();
@@ -122,9 +158,10 @@ async function toggleRecord() {
     stream.getTracks().forEach(t => t.stop());
     recording = false;
     document.getElementById('record-btn').textContent = '⏺ Start Recording';
-    const blob = new Blob(audioChunks, { type: 'audio/webm' });
+    const webmBlob = new Blob(audioChunks, { type: 'audio/webm' });
+    const wavBlob = await webmToWav(webmBlob);
     const form = new FormData();
-    form.append('audio', blob, 'sample.webm');
+    form.append('audio', wavBlob, 'sample.wav');
     form.append('duration_ms', durationMs);
     const resp = await fetch('/api/training/wake-word/samples', { method: 'POST', body: form });
     if (resp.ok) {
