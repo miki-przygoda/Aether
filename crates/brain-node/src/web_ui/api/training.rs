@@ -1,14 +1,16 @@
+use crate::tts::TextToSpeech;
 use crate::web_ui::{
     json_error, save_wake_samples_to_disk, AppState, ProgressEvent, TrainingStatus, VoiceSample,
     VoiceUser, WakeSample,
 };
+use aether_core::TtsSettings;
 use axum::{
     extract::{Multipart, Path, State},
     http::StatusCode,
     Json,
 };
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 
 // ── Wake word samples ─────────────────────────────────────────────────────────
 
@@ -126,7 +128,8 @@ pub async fn train_wake_word(
 
     let tx = state.wake_progress_tx.clone();
     let wake_training = state.wake_training.clone();
-    let samples: Vec<PathBuf> = state
+    let tts = state.tts.clone();
+    let user_samples: Vec<PathBuf> = state
         .wake_training
         .lock()
         .await
@@ -136,25 +139,76 @@ pub async fn train_wake_word(
         .collect();
 
     tokio::task::spawn_blocking(move || {
-        std::fs::create_dir_all(&models_dir).ok();
-
         {
             let mut t = wake_training.blocking_lock();
             t.status = TrainingStatus::Running {
                 progress: 0,
-                message: "Building wake word reference…".to_string(),
+                message: "Starting…".to_string(),
             };
         }
+
+        // ── temp dir holds trimmed user WAVs + TTS WAVs for this run ──
+        let tmp = match tempfile::TempDir::new() {
+            Ok(d) => d,
+            Err(e) => {
+                let msg = format!("failed to create temp dir: {e}");
+                let _ = tx.send(ProgressEvent {
+                    percent: 0,
+                    message: format!("Training failed: {msg}"),
+                    done: true,
+                    error: true,
+                });
+                wake_training.blocking_lock().status = TrainingStatus::Failed { error: msg };
+                return;
+            }
+        };
+
+        // ── step 1: TTS augmentation ──────────────────────────────────
         let _ = tx.send(ProgressEvent {
             percent: 10,
-            message: "Processing samples…".to_string(),
+            message: "Generating TTS reference samples…".to_string(),
+            ..Default::default()
+        });
+        let tts_paths = generate_tts_augments(&phrase, tts.as_deref(), tmp.path());
+        tracing::info!(count = tts_paths.len(), "TTS augmentation samples ready");
+
+        // ── step 2: trim silence from user recordings ─────────────────
+        let _ = tx.send(ProgressEvent {
+            percent: 30,
+            message: "Processing user samples…".to_string(),
+            ..Default::default()
+        });
+        let user_paths = prepare_user_samples(&user_samples, tmp.path());
+
+        if user_paths.is_empty() {
+            let msg = "no valid WAV samples found — re-record samples".to_string();
+            let _ = tx.send(ProgressEvent {
+                percent: 0,
+                message: format!("Training failed: {msg}"),
+                done: true,
+                error: true,
+            });
+            wake_training.blocking_lock().status = TrainingStatus::Failed { error: msg };
+            return;
+        }
+
+        // ── step 3: build rustpotter reference ────────────────────────
+        let _ = tx.send(ProgressEvent {
+            percent: 55,
+            message: format!(
+                "Building reference from {} user + {} TTS samples…",
+                user_paths.len(),
+                tts_paths.len()
+            ),
             ..Default::default()
         });
 
+        let all_paths: Vec<PathBuf> = user_paths.into_iter().chain(tts_paths).collect();
         let output_path = models_dir.join("hey-aether.rpw");
-        let status = build_wakeword_ref(&phrase, &samples, &output_path);
+        let result = build_wakeword_ref(&phrase, &all_paths, &output_path);
+        drop(tmp); // clean up temp files
 
-        let final_status = match status {
+        let final_status = match result {
             Ok(()) => {
                 let _ = tx.send(ProgressEvent {
                     percent: 100,
@@ -189,10 +243,12 @@ pub async fn train_wake_word(
     Ok(Json(serde_json::json!({ "status": "training started" })))
 }
 
-fn build_wakeword_ref(phrase: &str, samples: &[PathBuf], output: &PathBuf) -> anyhow::Result<()> {
-    use rustpotter::{WakewordRef, WakewordRefBuildFromFiles, WakewordSave};
+// ── Audio preprocessing ───────────────────────────────────────────────────────
 
-    let wav_samples: Vec<String> = samples
+/// Prepare user WAV samples: filter to existing WAVs, trim silence, write to `tmp_dir`.
+/// Falls back to the original file if trimming fails.
+fn prepare_user_samples(samples: &[PathBuf], tmp_dir: &FsPath) -> Vec<PathBuf> {
+    samples
         .iter()
         .filter(|p| {
             p.extension()
@@ -200,22 +256,201 @@ fn build_wakeword_ref(phrase: &str, samples: &[PathBuf], output: &PathBuf) -> an
                 .map(|e| e.eq_ignore_ascii_case("wav"))
                 .unwrap_or(false)
         })
+        .enumerate()
+        .filter_map(|(i, p)| {
+            if !p.exists() {
+                tracing::warn!(path = %p.display(), "sample file missing, skipping");
+                return None;
+            }
+            match read_wav_i16(p) {
+                Ok((raw, sr)) => {
+                    let (start, end) = trim_silence(&raw, sr);
+                    if end <= start + (sr as usize / 10) {
+                        // Less than 100 ms after trim — something is wrong, use original
+                        tracing::warn!(path = %p.display(), "silence trim left <100 ms, using original");
+                        return Some(p.clone());
+                    }
+                    let out = tmp_dir.join(format!("user_{i}.wav"));
+                    match write_wav_i16(&out, &raw[start..end], sr) {
+                        Ok(()) => Some(out),
+                        Err(e) => {
+                            tracing::warn!(path = %p.display(), "trim write failed ({e}), using original");
+                            Some(p.clone())
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(path = %p.display(), "WAV read failed: {e}");
+                    Some(p.clone())
+                }
+            }
+        })
+        .collect()
+}
+
+/// Generate TTS augmentation samples at 5 different speeds and resample to 16 kHz.
+fn generate_tts_augments(
+    phrase: &str,
+    tts: Option<&dyn TextToSpeech>,
+    tmp_dir: &FsPath,
+) -> Vec<PathBuf> {
+    let tts = match tts {
+        Some(t) => t,
+        None => {
+            tracing::info!("TTS not configured — skipping augmentation samples");
+            return vec![];
+        }
+    };
+
+    const SPEEDS: [f32; 5] = [0.8, 0.9, 1.0, 1.1, 1.2];
+    let mut paths = Vec::new();
+
+    for (i, &speed) in SPEEDS.iter().enumerate() {
+        let settings = TtsSettings {
+            speed,
+            voice: "default".to_string(),
+        };
+        match tts.synthesise(phrase, &settings) {
+            Err(e) => tracing::warn!(speed, "TTS synthesis failed: {e}"),
+            Ok(wav_bytes) => match decode_wav_f32(&wav_bytes) {
+                Err(e) => tracing::warn!(speed, "TTS WAV decode failed: {e}"),
+                Ok((samples_f32, src_rate)) => {
+                    let resampled = resample_linear(&samples_f32, src_rate, 16_000);
+                    let samples_i16: Vec<i16> =
+                        resampled.iter().map(|&s| f32_to_i16(s)).collect();
+                    let out = tmp_dir.join(format!("tts_{i}.wav"));
+                    match write_wav_i16(&out, &samples_i16, 16_000) {
+                        Ok(()) => paths.push(out),
+                        Err(e) => tracing::warn!(speed, "TTS WAV write failed: {e}"),
+                    }
+                }
+            },
+        }
+    }
+
+    paths
+}
+
+/// Find the (start, end) sample indices that contain speech, skipping leading/trailing silence.
+fn trim_silence(samples: &[i16], sample_rate: u32) -> (usize, usize) {
+    const THRESHOLD_RMS: f64 = 400.0; // ≈ -38 dBFS — well below speech, above silence
+    let window = (sample_rate as usize * 20) / 1000; // 20 ms analysis window
+    let hop = window / 2;
+    let pad = (sample_rate as usize * 60) / 1000; // 60 ms context padding each side
+
+    if samples.len() < window {
+        return (0, samples.len());
+    }
+
+    let rms = |start: usize| -> f64 {
+        let end = (start + window).min(samples.len());
+        let sq: f64 = samples[start..end]
+            .iter()
+            .map(|&s| (s as f64) * (s as f64))
+            .sum();
+        (sq / (end - start) as f64).sqrt()
+    };
+
+    let voiced_frames: Vec<usize> = (0..samples.len().saturating_sub(window))
+        .step_by(hop.max(1))
+        .filter(|&i| rms(i) > THRESHOLD_RMS)
+        .collect();
+
+    match (voiced_frames.first(), voiced_frames.last()) {
+        (Some(&first), Some(&last)) => {
+            let start = first.saturating_sub(pad);
+            let end = (last + window + pad).min(samples.len());
+            (start, end)
+        }
+        _ => (0, samples.len()), // entirely silent — return as-is; rustpotter will reject it
+    }
+}
+
+// ── WAV I/O helpers ───────────────────────────────────────────────────────────
+
+fn read_wav_i16(path: &FsPath) -> anyhow::Result<(Vec<i16>, u32)> {
+    let reader = hound::WavReader::open(path)?;
+    let sr = reader.spec().sample_rate;
+    let samples: Result<Vec<i16>, _> = reader.into_samples::<i16>().collect();
+    Ok((samples?, sr))
+}
+
+fn write_wav_i16(path: &FsPath, samples: &[i16], sample_rate: u32) -> anyhow::Result<()> {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut w = hound::WavWriter::create(path, spec)?;
+    for &s in samples {
+        w.write_sample(s)?;
+    }
+    w.finalize()?;
+    Ok(())
+}
+
+fn decode_wav_f32(bytes: &[u8]) -> anyhow::Result<(Vec<f32>, u32)> {
+    let cursor = std::io::Cursor::new(bytes);
+    let reader = hound::WavReader::new(cursor)?;
+    let sr = reader.spec().sample_rate;
+    let samples: Vec<f32> = reader
+        .into_samples::<i16>()
+        .filter_map(|s| s.ok())
+        .map(|s| s as f32 / i16::MAX as f32)
+        .collect();
+    Ok((samples, sr))
+}
+
+/// Linear interpolation resampler — good enough for MFCC-based DTW matching.
+fn resample_linear(samples: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> {
+    if src_rate == dst_rate {
+        return samples.to_vec();
+    }
+    let ratio = src_rate as f64 / dst_rate as f64;
+    let out_len = (samples.len() as f64 / ratio) as usize;
+    (0..out_len)
+        .map(|i| {
+            let pos = i as f64 * ratio;
+            let idx = pos as usize;
+            let frac = (pos - idx as f64) as f32;
+            let a = samples.get(idx).copied().unwrap_or(0.0);
+            let b = samples.get(idx + 1).copied().unwrap_or(a);
+            a + (b - a) * frac
+        })
+        .collect()
+}
+
+#[inline]
+fn f32_to_i16(s: f32) -> i16 {
+    (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
+}
+
+// ── rustpotter model build ────────────────────────────────────────────────────
+
+/// Build a rustpotter DTW reference model from the supplied WAV paths (already trimmed/resampled).
+fn build_wakeword_ref(phrase: &str, samples: &[PathBuf], output: &PathBuf) -> anyhow::Result<()> {
+    use rustpotter::{WakewordRef, WakewordRefBuildFromFiles, WakewordSave};
+
+    let wav_paths: Vec<String> = samples
+        .iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
 
-    anyhow::ensure!(
-        !wav_samples.is_empty(),
-        "no WAV samples found — re-record samples (old WebM files are not supported)"
-    );
+    tracing::info!(count = wav_paths.len(), "calling rustpotter WakewordRef::new_from_sample_files");
 
     let wakeword =
-        WakewordRef::new_from_sample_files(phrase.to_string(), None, None, wav_samples, 40)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        WakewordRef::new_from_sample_files(phrase.to_string(), None, None, wav_paths, 40)
+            .map_err(|e| anyhow::anyhow!("rustpotter: {e}"))?;
 
-    let out_str = output.to_string_lossy().into_owned();
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("create models dir: {e}"))?;
+    }
+
     wakeword
-        .save_to_file(&out_str)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        .save_to_file(&output.to_string_lossy())
+        .map_err(|e| anyhow::anyhow!("save model: {e}"))?;
 
     Ok(())
 }
