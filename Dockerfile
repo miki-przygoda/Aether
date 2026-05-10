@@ -14,8 +14,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL \
-    "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" \
+RUN ARCH=$(uname -m) && \
+    case "$ARCH" in \
+        x86_64)  ORT_ARCH=x64 ;; \
+        aarch64) ORT_ARCH=aarch64 ;; \
+        *)       echo "Unsupported arch: $ARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL \
+    "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}.tgz" \
     | tar xz --strip-components=2 -C /usr/local/lib \
     --wildcards "*/lib/libonnxruntime.so*" "*/lib/libonnxruntime_providers_shared.so"
 

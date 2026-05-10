@@ -145,9 +145,15 @@ enum Command {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run())
+}
+
+async fn run() -> Result<()> {
     match Cli::parse().command {
         Command::Serve {
             port,
@@ -239,6 +245,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         config_dir,
         finetuning_url,
     } = args;
+
     std::fs::create_dir_all(&config_dir).context("creating config dir")?;
     let local_ip = local_ip_address::local_ip().context("detecting local IP")?;
     tracing::info!(ip = %local_ip, "brain local address");
@@ -285,39 +292,73 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let tts_engine: Option<Arc<dyn tts::TextToSpeech>> = if let Some(model_path) = kokoro_model {
         let model_str = model_path
             .to_str()
-            .context("KOKORO_MODEL_PATH is not valid UTF-8")?;
+            .context("KOKORO_MODEL_PATH is not valid UTF-8")?
+            .to_owned();
         tracing::info!(model = %model_str, "loading Kokoro TTS model");
-        let k = tts::KokoroTts::new(model_str).context("loading Kokoro TTS model")?;
-        Some(Arc::new(k))
+        // ORT environment creation can deadlock on some aarch64/Docker Desktop setups.
+        // Apply a 60s timeout: if it hangs, disable TTS and continue so the web UI
+        // still starts. The idle ORT threads consume no CPU while sleeping.
+        let load_result = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            tokio::task::spawn_blocking(move || tts::KokoroTts::new(&model_str)),
+        )
+        .await;
+        match load_result {
+            Ok(Ok(Ok(k))) => Some(Arc::new(k)),
+            Ok(Ok(Err(e))) => {
+                tracing::error!("TTS model load failed: {e:#} — TTS disabled");
+                None
+            }
+            Ok(Err(e)) => {
+                tracing::error!("TTS init thread panicked: {e} — TTS disabled");
+                None
+            }
+            Err(_elapsed) => {
+                tracing::warn!("TTS model load timed out after 60 s — TTS disabled (ORT init deadlock?)");
+                None
+            }
+        }
     } else {
         tracing::warn!("--kokoro-model not set — TTS disabled");
         None
     };
 
     // ── Qdrant / RAG ──────────────────────────────────────────────────────────
+    // QdrantStore uses reqwest::blocking — run all Qdrant I/O on a blocking
+    // thread to avoid occupying Tokio worker threads.
     let rag_config: Option<grpc::RagConfig> = if let Some(ref url) = qdrant_url {
         use vector_store::{QdrantStore, VectorStore, COLLECTION_DOCUMENTS, COLLECTION_HISTORY};
         tracing::info!(%url, "connecting to Qdrant");
-        let store = Arc::new(QdrantStore::new(url).context("creating Qdrant client")?)
-            as Arc<dyn VectorStore>;
 
-        // nomic-embed-text produces 768-dimensional vectors.
-        const EMBED_DIM: usize = 768;
-        store
-            .ensure_collection(COLLECTION_DOCUMENTS, EMBED_DIM)
-            .context("creating Qdrant documents collection")?;
-        store
-            .ensure_collection(COLLECTION_HISTORY, 1)
-            .context("creating Qdrant history collection")?;
+        let qdrant_url_str = url.clone();
+        let embed_url_clone = embed_url.clone();
+        let embed_model_clone = embed_model.clone();
+        let documents_dir_clone = documents_dir.clone();
 
-        // Ingest documents if a directory is configured.
-        if let Some(ref dir) = documents_dir {
-            tracing::info!(dir = %dir.display(), "ingesting documents");
-            match ingest::ingest_dir(dir, &store, &embed_url, &embed_model) {
-                Ok(n) => tracing::info!(chunks = n, "document ingestion complete"),
-                Err(e) => tracing::warn!("document ingestion failed: {e}"),
+        let store: Arc<dyn VectorStore> = tokio::task::spawn_blocking(move || {
+            // nomic-embed-text produces 768-dimensional vectors.
+            const EMBED_DIM: usize = 768;
+            let store = Arc::new(
+                QdrantStore::new(&qdrant_url_str).context("creating Qdrant client")?,
+            ) as Arc<dyn VectorStore>;
+            store
+                .ensure_collection(COLLECTION_DOCUMENTS, EMBED_DIM)
+                .context("creating Qdrant documents collection")?;
+            store
+                .ensure_collection(COLLECTION_HISTORY, 1)
+                .context("creating Qdrant history collection")?;
+
+            if let Some(ref dir) = documents_dir_clone {
+                match ingest::ingest_dir(dir, &store, &embed_url_clone, &embed_model_clone) {
+                    Ok(n) => tracing::info!(chunks = n, "document ingestion complete"),
+                    Err(e) => tracing::warn!("document ingestion failed: {e}"),
+                }
             }
-        }
+            Ok::<_, anyhow::Error>(store)
+        })
+        .await
+        .context("Qdrant init thread panicked")?
+        .context("Qdrant setup failed")?;
 
         Some(grpc::RagConfig {
             store,

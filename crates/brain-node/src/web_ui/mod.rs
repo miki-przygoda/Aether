@@ -11,7 +11,7 @@ use crate::tts::TextToSpeech;
 use aether_core::{CommandTrie, TtsSettings};
 use axum::{
     http::StatusCode,
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse, Redirect, Response},
     routing::get,
     Router,
 };
@@ -256,8 +256,14 @@ pub fn json_error(msg: impl Into<String>) -> axum::Json<serde_json::Value> {
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
+async fn root_redirect() -> Redirect {
+    Redirect::permanent("/ui/")
+}
+
 pub fn make_router(state: AppState) -> Router {
     Router::new()
+        // Root redirect
+        .route("/", get(root_redirect))
         // Static assets
         .route("/static/app.css", get(serve_css))
         .route("/static/app.js", get(serve_js))
