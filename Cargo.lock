@@ -287,6 +287,7 @@ dependencies = [
  "prost",
  "rcgen",
  "reqwest",
+ "rustpotter",
  "serde",
  "serde_json",
  "tempfile",
@@ -328,8 +329,6 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 [[package]]
 name = "candle-core"
 version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dde6b117b2e56ee68959aad0cb5fdfe65f39328c8c82e5bd356a6b95ade471c7"
 dependencies = [
  "byteorder",
  "candle-gemm",

@@ -9,3 +9,9 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+
+# candle-core 0.2.2 uses rand_distr::Normal<f16/bf16> which fails with rand_distr 0.4.3
+# because StandardNormal doesn't impl Distribution<f16>. Patch with a local copy that
+# samples as f32 then converts, keeping the same behaviour without unsupported generics.
+[patch.crates-io]
+candle-core = { path = "crates/candle-core-patch" }
