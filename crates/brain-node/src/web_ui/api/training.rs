@@ -142,17 +142,17 @@ pub async fn train_wake_word(
             let mut t = wake_training.blocking_lock();
             t.status = TrainingStatus::Running {
                 progress: 0,
-                message: "Starting rustpotter-cli…".to_string(),
+                message: "Building wake word reference…".to_string(),
             };
         }
         let _ = tx.send(ProgressEvent {
             percent: 10,
-            message: "Collecting samples…".to_string(),
+            message: "Processing samples…".to_string(),
             ..Default::default()
         });
 
         let output_path = models_dir.join("hey-aether.rpw");
-        let status = run_rustpotter_train(&phrase, &samples, &output_path);
+        let status = build_wakeword_ref(&phrase, &samples, &output_path);
 
         let final_status = match status {
             Ok(()) => {
@@ -189,18 +189,34 @@ pub async fn train_wake_word(
     Ok(Json(serde_json::json!({ "status": "training started" })))
 }
 
-fn run_rustpotter_train(phrase: &str, samples: &[PathBuf], output: &PathBuf) -> anyhow::Result<()> {
-    let mut cmd = std::process::Command::new("rustpotter-cli");
-    cmd.arg("train")
-        .arg("--wakeword")
-        .arg(phrase)
-        .arg("--output")
-        .arg(output);
-    for s in samples {
-        cmd.arg(s);
-    }
-    let status = cmd.status()?;
-    anyhow::ensure!(status.success(), "rustpotter-cli exited with {status}");
+fn build_wakeword_ref(phrase: &str, samples: &[PathBuf], output: &PathBuf) -> anyhow::Result<()> {
+    use rustpotter::{WakewordRef, WakewordRefBuildFromFiles, WakewordSave};
+
+    let wav_samples: Vec<String> = samples
+        .iter()
+        .filter(|p| {
+            p.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("wav"))
+                .unwrap_or(false)
+        })
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+
+    anyhow::ensure!(
+        !wav_samples.is_empty(),
+        "no WAV samples found — re-record samples (old WebM files are not supported)"
+    );
+
+    let wakeword =
+        WakewordRef::new_from_sample_files(phrase.to_string(), None, None, wav_samples, 40)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let out_str = output.to_string_lossy().into_owned();
+    wakeword
+        .save_to_file(&out_str)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
     Ok(())
 }
 
