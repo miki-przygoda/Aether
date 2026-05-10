@@ -32,5 +32,7 @@ pub fn build() -> minijinja::Environment<'static> {
         include_str!("templates/training_voice.html"),
     )
     .unwrap();
+    env.add_template("setup.html", include_str!("templates/setup.html"))
+        .unwrap();
     env
 }

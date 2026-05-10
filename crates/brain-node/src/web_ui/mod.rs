@@ -71,6 +71,8 @@ impl AppState {
 
         let model_settings = load_model_settings(&config_dir);
 
+        let existing_wake_samples = load_wake_samples_from_disk(&config_dir);
+
         Self {
             env: Arc::new(templates::build()),
             registry,
@@ -84,7 +86,10 @@ impl AppState {
             config_dir,
             documents_dir,
             ollama_url,
-            wake_training: Arc::new(Mutex::new(WakeTrainingState::default())),
+            wake_training: Arc::new(Mutex::new(WakeTrainingState {
+                samples: existing_wake_samples,
+                ..Default::default()
+            })),
             voice_training: Arc::new(Mutex::new(VoiceTrainingState::default())),
             model_settings: Arc::new(RwLock::new(model_settings)),
             finetuning_url,
@@ -137,10 +142,101 @@ pub fn register_paired_node(config_dir: &std::path::Path, node_id: &str) {
     }
 }
 
+// ── Wake sample persistence ────────────────────────────────────────────────────
+
+fn wake_samples_index(config_dir: &std::path::Path) -> std::path::PathBuf {
+    config_dir.join("wake_samples").join("index.json")
+}
+
+pub fn load_wake_samples_from_disk(config_dir: &std::path::Path) -> Vec<WakeSample> {
+    std::fs::read_to_string(wake_samples_index(config_dir))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_wake_samples_to_disk(config_dir: &std::path::Path, samples: &[WakeSample]) {
+    let path = wake_samples_index(config_dir);
+    // Ensure the directory exists before writing.
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(samples) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
 pub fn remove_paired_node(config_dir: &std::path::Path, node_id: &str) {
     let mut nodes = load_paired_nodes(config_dir);
     nodes.retain(|n| n.node_id != node_id);
     save_paired_nodes(config_dir, &nodes);
+}
+
+// ── Setup wizard state ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WizardStage {
+    BrainCheck,
+    Pairing,
+    WakeWord,
+    GoLive,
+    Complete,
+}
+
+impl WizardStage {
+    pub fn next(&self) -> Option<WizardStage> {
+        match self {
+            Self::BrainCheck => Some(Self::Pairing),
+            Self::Pairing    => Some(Self::WakeWord),
+            Self::WakeWord   => Some(Self::GoLive),
+            Self::GoLive     => Some(Self::Complete),
+            Self::Complete   => None,
+        }
+    }
+
+    pub fn index(&self) -> usize {
+        match self {
+            Self::BrainCheck => 0,
+            Self::Pairing    => 1,
+            Self::WakeWord   => 2,
+            Self::GoLive     => 3,
+            Self::Complete   => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WizardState {
+    pub stage: WizardStage,
+    pub target_node_id: Option<String>,
+    /// Path to the trained wake-word model on the brain (config dir).
+    pub wake_model_path: Option<String>,
+}
+
+impl Default for WizardState {
+    fn default() -> Self {
+        Self {
+            stage: WizardStage::BrainCheck,
+            target_node_id: None,
+            wake_model_path: None,
+        }
+    }
+}
+
+pub fn load_wizard_state(config_dir: &std::path::Path) -> WizardState {
+    let path = config_dir.join("setup_wizard.json");
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_wizard_state(config_dir: &std::path::Path, state: &WizardState) {
+    let path = config_dir.join("setup_wizard.json");
+    if let Ok(json) = serde_json::to_string_pretty(state) {
+        let _ = std::fs::write(path, json);
+    }
 }
 
 // ── Domain types ───────────────────────────────────────────────────────────────
@@ -259,11 +355,12 @@ pub enum LlmRouting {
 }
 
 /// Progress event emitted by training jobs and ingestion — subscribers render it as SSE data.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct ProgressEvent {
     pub percent: u8,
     pub message: String,
     pub done: bool,
+    pub error: bool,
 }
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -308,6 +405,7 @@ pub fn make_router(state: AppState) -> Router {
         .route("/static/app.css", get(serve_css))
         .route("/static/app.js", get(serve_js))
         // Pages
+        .route("/ui/setup", get(pages::setup::handler))
         .route("/ui/", get(pages::dashboard::handler))
         .route("/ui", get(pages::dashboard::handler))
         .route("/ui/nodes", get(pages::nodes::list_handler))
@@ -332,6 +430,12 @@ pub fn make_router(state: AppState) -> Router {
             "/events/documents/ingest",
             get(sse::ingest_progress_handler),
         )
+        // API — setup wizard
+        .route("/api/setup/status", get(api::setup::get_status))
+        .route("/api/setup/advance", axum::routing::post(api::setup::advance_stage))
+        .route("/api/setup/node", axum::routing::post(api::setup::set_target_node))
+        .route("/api/setup/wake-model", axum::routing::post(api::setup::set_wake_model))
+        .route("/api/setup/reset", axum::routing::delete(api::setup::reset))
         // API — nodes
         .route("/api/nodes", get(api::nodes::list))
         .route(

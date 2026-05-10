@@ -1,0 +1,275 @@
+{% extends "base.html" %}
+{% block title %}Setup — Aether{% endblock %}
+{% block heading %}Setup Wizard{% endblock %}
+{% block header_actions %}
+  {% if stage == "complete" %}
+    <a href="/ui/" class="btn">Go to Dashboard</a>
+  {% else %}
+    <button class="btn btn-sm" onclick="resetWizard()" style="opacity:.6">Start over</button>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+
+{# ── Step indicators ──────────────────────────────────────────────────────── #}
+<div class="wizard-steps">
+  {% set steps = [["Brain Ready", "brain_check"], ["Pair Node", "pairing"], ["Wake Word", "wake_word"], ["Go Live", "go_live"]] %}
+  {% for step in steps %}
+    {% set i = loop.index0 %}
+    <div class="wizard-step {% if i < stage_index %}done{% elif i == stage_index %}active{% else %}pending{% endif %}">
+      <div class="wizard-step-dot">
+        {% if i < stage_index %}✓{% else %}{{ loop.index }}{% endif %}
+      </div>
+      <span>{{ step[0] }}</span>
+    </div>
+    {% if not loop.last %}<div class="wizard-connector {% if i < stage_index %}done{% endif %}"></div>{% endif %}
+  {% endfor %}
+</div>
+
+{# ── Stage content ────────────────────────────────────────────────────────── #}
+<div class="wizard-body">
+
+{# ── Stage 0: Brain health check ──────────────────────────────────────────── #}
+{% if stage == "brain_check" %}
+<div class="card" style="max-width:560px">
+  <h2>Checking brain health…</h2>
+  <div id="health-list" style="margin:1.25rem 0;display:flex;flex-direction:column;gap:.6rem">
+    <div class="health-row" id="h-certs"><span class="spinner"></span> Checking certificates…</div>
+    <div class="health-row" id="h-ollama"><span class="spinner"></span> Checking Ollama…</div>
+    <div class="health-row" id="h-qdrant"><span class="spinner"></span> Checking Qdrant…</div>
+  </div>
+  <div id="health-error" class="alert alert-error" style="display:none"></div>
+  <button id="btn-advance" class="btn" style="display:none" onclick="advanceStage()">Continue →</button>
+</div>
+
+<script>
+(async function() {
+  const resp = await fetch('/api/setup/status');
+  const s = await resp.json();
+
+  function setRow(id, ok, label) {
+    const el = document.getElementById(id);
+    el.innerHTML = (ok
+      ? '<span style="color:var(--green)">✓</span> '
+      : '<span style="color:var(--red)">✗</span> ') + label;
+  }
+
+  setRow('h-certs',  s.brain_healthy, 'TLS certificates generated');
+  setRow('h-ollama', s.brain_healthy, 'Ollama reachable');
+  setRow('h-qdrant', true,            'Qdrant reachable');
+
+  if (s.brain_healthy) {
+    document.getElementById('btn-advance').style.display = 'inline-flex';
+  } else {
+    document.getElementById('health-error').style.display = 'block';
+    document.getElementById('health-error').textContent =
+      'Brain not fully healthy. Check that the Docker stack is running and Ollama has finished pulling the model.';
+  }
+})();
+</script>
+
+{# ── Stage 1: Pair node ───────────────────────────────────────────────────── #}
+{% elif stage == "pairing" %}
+<div class="card" style="max-width:620px">
+  <h2>Pair your edge node</h2>
+
+  {% if paired_nodes %}
+  <p>Already paired nodes — select one to use, or pair a new one below.</p>
+  <div style="display:flex;flex-direction:column;gap:.5rem;margin-bottom:1.5rem">
+    {% for n in paired_nodes %}
+    <label class="radio-row">
+      <input type="radio" name="existing-node" value="{{ n.node_id }}" onchange="selectNode('{{ n.node_id }}')">
+      <strong>{{ n.node_id }}</strong> <span class="muted">(already paired)</span>
+    </label>
+    {% endfor %}
+  </div>
+  <hr style="border-color:var(--border);margin-bottom:1.5rem">
+  {% endif %}
+
+  <p>Connect your Raspberry Pi to this machine with an Ethernet cable, then run this command on the Pi:</p>
+  <div class="code-block">
+    <code id="pair-cmd">edge-node pair --brain-addr {{ brain_ip }}:{{ pair_port }} --node-id my-pi</code>
+    <button class="btn btn-sm copy-btn" onclick="copyCode('pair-cmd')">Copy</button>
+  </div>
+  <p style="margin-top:.75rem" class="muted">Change <code>my-pi</code> to whatever name you'd like for this node.</p>
+
+  <div id="pair-waiting" class="alert" style="margin-top:1.5rem;background:var(--bg3)">
+    <span class="spinner"></span> Waiting for a pairing request…
+  </div>
+  <div id="pair-detected" class="alert alert-success" style="display:none">
+    ✓ Node <strong id="pair-node-name"></strong> paired successfully!
+  </div>
+
+  <button id="btn-advance" class="btn" style="display:none;margin-top:1rem" onclick="advanceStage()">Continue →</button>
+</div>
+
+<script>
+function selectNode(id) {
+  fetch('/api/setup/node', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ node_id: id }),
+  }).then(() => {
+    document.getElementById('pair-waiting').style.display = 'none';
+    const det = document.getElementById('pair-detected');
+    det.style.display = 'block';
+    document.getElementById('pair-node-name').textContent = id;
+    document.getElementById('btn-advance').style.display = 'inline-flex';
+  });
+}
+
+// Poll for a newly paired node every 3 s.
+(function poll() {
+  fetch('/api/setup/status').then(r => r.json()).then(s => {
+    if (s.node_paired && s.target_node_id) {
+      document.getElementById('pair-waiting').style.display = 'none';
+      const det = document.getElementById('pair-detected');
+      det.style.display = 'block';
+      document.getElementById('pair-node-name').textContent = s.target_node_id;
+      document.getElementById('btn-advance').style.display = 'inline-flex';
+    } else {
+      setTimeout(poll, 3000);
+    }
+  });
+})();
+
+// When a new node pairs via the gRPC path the SSE nodes event fires.
+// We catch that and treat it as the pairing confirmation.
+const es = new EventSource('/events/nodes');
+es.onmessage = function(e) {
+  try {
+    const data = JSON.parse(e.data);
+    if (data.node_id) {
+      fetch('/api/setup/node', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ node_id: data.node_id }),
+      }).then(() => {
+        document.getElementById('pair-waiting').style.display = 'none';
+        const det = document.getElementById('pair-detected');
+        det.style.display = 'block';
+        document.getElementById('pair-node-name').textContent = data.node_id;
+        document.getElementById('btn-advance').style.display = 'inline-flex';
+        es.close();
+      });
+    }
+  } catch(_) {}
+};
+</script>
+
+{# ── Stage 2: Wake word ───────────────────────────────────────────────────── #}
+{% elif stage == "wake_word" %}
+<div class="card" style="max-width:620px">
+  <h2>Train wake word</h2>
+  <p>Record or upload samples of your wake word phrase, then train the model. The wizard will wait for training to complete.</p>
+  <a href="/ui/training/wake-word" class="btn" target="_blank" style="margin-bottom:1.5rem">Open Wake Word Trainer ↗</a>
+  <p class="muted" style="margin-bottom:1rem">Come back here once training is complete and the model has been deployed.</p>
+
+  <div id="ww-status" style="display:flex;flex-direction:column;gap:.5rem">
+    <div id="ww-checking"><span class="spinner"></span> Checking for trained model…</div>
+  </div>
+
+  <button id="btn-advance" class="btn" style="display:none;margin-top:1.25rem" onclick="advanceStage()">Continue →</button>
+</div>
+
+<script>
+(function poll() {
+  fetch('/api/setup/status').then(r => r.json()).then(s => {
+    const el = document.getElementById('ww-checking');
+    if (s.wake_model_ready) {
+      el.innerHTML = '<span style="color:var(--green)">✓</span> Wake word model ready at <code>' + s.wake_model_path + '</code>';
+      document.getElementById('btn-advance').style.display = 'inline-flex';
+    } else {
+      el.innerHTML = '<span class="spinner"></span> No trained model found yet — complete training and deploy, then return here.';
+      setTimeout(poll, 4000);
+    }
+  });
+})();
+</script>
+
+{# ── Stage 3: Go live ─────────────────────────────────────────────────────── #}
+{% elif stage == "go_live" %}
+<div class="card" style="max-width:640px">
+  <h2>Start the edge node</h2>
+  <p>Run this command on your Pi to start listening for the wake word:</p>
+  <div class="code-block">
+    <code id="run-cmd">edge-node run --model-path ~/.config/aether/wake.rpw</code>
+    <button class="btn btn-sm copy-btn" onclick="copyCode('run-cmd')">Copy</button>
+  </div>
+
+  <p style="margin-top:1.25rem">To start automatically on boot, run:</p>
+  <div class="code-block">
+    <code id="svc-cmd">sudo systemctl enable --now aether-edge</code>
+    <button class="btn btn-sm copy-btn" onclick="copyCode('svc-cmd')">Copy</button>
+  </div>
+
+  <div id="live-waiting" class="alert" style="margin-top:1.5rem;background:var(--bg3)">
+    <span class="spinner"></span> Waiting for node to connect…
+  </div>
+  <div id="live-connected" class="alert alert-success" style="display:none">
+    ✓ <strong id="live-node-name"></strong> is online!
+  </div>
+  <button id="btn-advance" class="btn" style="display:none;margin-top:1rem" onclick="advanceStage()">Finish setup →</button>
+</div>
+
+<script>
+const es = new EventSource('/events/nodes');
+es.onmessage = function(e) {
+  try {
+    const data = JSON.parse(e.data);
+    document.getElementById('live-waiting').style.display = 'none';
+    const el = document.getElementById('live-connected');
+    el.style.display = 'block';
+    document.getElementById('live-node-name').textContent = data.node_id;
+    document.getElementById('btn-advance').style.display = 'inline-flex';
+    es.close();
+  } catch(_) {}
+};
+
+// Also poll in case the node was already online when the page loaded.
+(function poll() {
+  fetch('/api/setup/status').then(r => r.json()).then(s => {
+    if (s.node_online) {
+      document.getElementById('live-waiting').style.display = 'none';
+      const el = document.getElementById('live-connected');
+      el.style.display = 'block';
+      document.getElementById('live-node-name').textContent = s.target_node_id || 'Node';
+      document.getElementById('btn-advance').style.display = 'inline-flex';
+    } else {
+      setTimeout(poll, 3000);
+    }
+  });
+})();
+</script>
+
+{# ── Complete ──────────────────────────────────────────────────────────────── #}
+{% elif stage == "complete" %}
+<div class="card" style="max-width:520px;text-align:center;padding:2.5rem">
+  <div style="font-size:3rem;margin-bottom:1rem">✓</div>
+  <h2 style="margin-bottom:.5rem">Setup complete</h2>
+  <p class="muted" style="margin-bottom:1.5rem">Your Aether system is ready. The edge node is paired, the wake word is trained, and the node is live.</p>
+  <a href="/ui/" class="btn">Go to Dashboard</a>
+</div>
+{% endif %}
+
+</div>{# /wizard-body #}
+
+<script>
+async function advanceStage() {
+  const resp = await fetch('/api/setup/advance', { method: 'POST' });
+  if (resp.ok) location.reload();
+  else flashBanner('Could not advance stage', 'error');
+}
+
+async function resetWizard() {
+  if (!confirm('Reset the setup wizard? Your paired nodes and trained models are kept.')) return;
+  await fetch('/api/setup/reset', { method: 'DELETE' });
+  location.reload();
+}
+
+function copyCode(id) {
+  const text = document.getElementById(id).textContent;
+  navigator.clipboard.writeText(text).then(() => flashBanner('Copied!'));
+}
+</script>
+{% endblock %}
