@@ -103,7 +103,7 @@ pub async fn trigger_ingest(
         let _ = tx.send(ProgressEvent {
             percent: 0,
             message: "Starting ingestion…".to_string(),
-            done: false,
+            ..Default::default()
         });
         match crate::ingest::ingest_dir(&dir, &rag.store, &rag.embed_url, &rag.embed_model) {
             Ok(n) => {
@@ -111,6 +111,7 @@ pub async fn trigger_ingest(
                     percent: 100,
                     message: format!("Ingested {n} chunks"),
                     done: true,
+                    ..Default::default()
                 });
             }
             Err(e) => {
@@ -118,6 +119,7 @@ pub async fn trigger_ingest(
                     percent: 0,
                     message: format!("Error: {e}"),
                     done: true,
+                    error: true,
                 });
             }
         }

@@ -1,5 +1,6 @@
 use crate::web_ui::{
-    json_error, AppState, ProgressEvent, TrainingStatus, VoiceSample, VoiceUser, WakeSample,
+    json_error, save_wake_samples_to_disk, AppState, ProgressEvent, TrainingStatus, VoiceSample,
+    VoiceUser, WakeSample,
 };
 use axum::{
     extract::{Multipart, Path, State},
@@ -23,22 +24,46 @@ pub async fn upload_wake_sample(
     std::fs::create_dir_all(&samples_dir)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, json_error(e.to_string())))?;
 
-    let Ok(Some(field)) = multipart.next_field().await else {
-        return Err((StatusCode::BAD_REQUEST, json_error("no file field")));
-    };
+    let mut audio_data: Option<(Vec<u8>, String)> = None;
+    let mut duration_ms: u32 = 0;
 
-    let data = field
-        .bytes()
-        .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, json_error(e.to_string())))?;
+    while let Ok(Some(field)) = multipart.next_field().await {
+        match field.name() {
+            Some("duration_ms") => {
+                let text = field.text().await.unwrap_or_default();
+                duration_ms = text.parse().unwrap_or(0);
+            }
+            Some("audio") | _ => {
+                let name = field.file_name().unwrap_or("sample.webm").to_string();
+                let data = field
+                    .bytes()
+                    .await
+                    .map_err(|e| (StatusCode::BAD_REQUEST, json_error(e.to_string())))?
+                    .to_vec();
+                audio_data = Some((data, name));
+            }
+        }
+    }
+
+    let (data, original_name) =
+        audio_data.ok_or_else(|| (StatusCode::BAD_REQUEST, json_error("no audio field")))?;
+
+    let ext = std::path::Path::new(&original_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("webm");
 
     let id = uuid::Uuid::new_v4().to_string();
-    let filename = format!("sample_{id}.wav");
+    let filename = format!("sample_{id}.{ext}");
     let path = samples_dir.join(&filename);
     std::fs::write(&path, &data)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, json_error(e.to_string())))?;
 
-    let duration_ms = wav_duration_ms(&data);
+    // Fall back to WAV header parsing only if the client didn't supply a duration.
+    if duration_ms == 0 {
+        duration_ms = wav_duration_ms(&data);
+    }
+
     let sample = WakeSample {
         id: id.clone(),
         filename: filename.clone(),
@@ -46,12 +71,11 @@ pub async fn upload_wake_sample(
         size_bytes: data.len() as u64,
     };
 
-    state
-        .wake_training
-        .lock()
-        .await
-        .samples
-        .push(sample.clone());
+    {
+        let mut training = state.wake_training.lock().await;
+        training.samples.push(sample.clone());
+        save_wake_samples_to_disk(&state.config_dir, &training.samples);
+    }
     Ok(Json(sample))
 }
 
@@ -64,6 +88,7 @@ pub async fn delete_wake_sample(
     if let Some(pos) = training.samples.iter().position(|s| s.id == id) {
         let sample = training.samples.remove(pos);
         let _ = std::fs::remove_file(samples_dir.join(&sample.filename));
+        save_wake_samples_to_disk(&state.config_dir, &training.samples);
     }
     StatusCode::NO_CONTENT
 }
@@ -123,7 +148,7 @@ pub async fn train_wake_word(
         let _ = tx.send(ProgressEvent {
             percent: 10,
             message: "Collecting samples…".to_string(),
-            done: false,
+            ..Default::default()
         });
 
         let output_path = models_dir.join("hey-aether.rpw");
@@ -135,6 +160,7 @@ pub async fn train_wake_word(
                     percent: 100,
                     message: "Training complete".to_string(),
                     done: true,
+                    ..Default::default()
                 });
                 TrainingStatus::Complete {
                     accuracy: 0.92,
@@ -147,6 +173,7 @@ pub async fn train_wake_word(
                     percent: 0,
                     message: format!("Training failed: {msg}"),
                     done: true,
+                    error: true,
                 });
                 TrainingStatus::Failed { error: msg }
             }
@@ -384,7 +411,7 @@ pub async fn train_voice(
         let _ = tx.send(ProgressEvent {
             percent: 5,
             message: "Submitting to fine-tuning service…".to_string(),
-            done: false,
+            ..Default::default()
         });
 
         let resp = client
@@ -398,6 +425,7 @@ pub async fn train_voice(
                     percent: 100,
                     message: "Fine-tuning complete".to_string(),
                     done: true,
+                    ..Default::default()
                 });
                 let mut t = voice_training.blocking_lock();
                 if let Some(u) = t.users.iter_mut().find(|u| u.id == user_id) {
@@ -411,6 +439,7 @@ pub async fn train_voice(
                     percent: 0,
                     message: msg,
                     done: true,
+                    error: true,
                 });
             }
             Err(e) => {
@@ -418,6 +447,7 @@ pub async fn train_voice(
                     percent: 0,
                     message: format!("finetuning request failed: {e}"),
                     done: true,
+                    error: true,
                 });
             }
         }
