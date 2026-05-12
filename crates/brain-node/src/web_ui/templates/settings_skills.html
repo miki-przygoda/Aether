@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Skills Settings — Aether{% endblock %}
+{% block heading %}Skills Settings{% endblock %}
+
+{% block content %}
+
+{# ── Location ──────────────────────────────────────────────────────────────── #}
+<section class="card" style="max-width:560px;margin-bottom:1.5rem">
+  <h2 class="card-title">Location</h2>
+  <p class="muted" style="margin-bottom:1rem">Required for the weather skill. Search for your city below.</p>
+
+  {% if location_display_name %}
+  <div class="alert alert-ok" style="margin-bottom:1rem">
+    Current: <strong>{{ location_display_name }}</strong>
+    <span class="muted">({{ latitude }}, {{ longitude }})</span>
+  </div>
+  {% else %}
+  <div class="alert alert-warn" style="margin-bottom:1rem">
+    Location not set — weather skill is disabled until you pick a city.
+  </div>
+  {% endif %}
+
+  <div class="field">
+    <span>City search</span>
+    <div style="display:flex;gap:.5rem">
+      <input type="text" id="city-query" placeholder="e.g. London" style="flex:1"
+             onkeydown="if(event.key==='Enter') searchCity()">
+      <button class="btn btn-secondary" onclick="searchCity()">Search</button>
+    </div>
+  </div>
+  <div id="city-results" style="margin-top:.75rem"></div>
+</section>
+
+{# ── Home Assistant ────────────────────────────────────────────────────────── #}
+<section class="card" style="max-width:560px;margin-bottom:1.5rem">
+  <h2 class="card-title">Home Assistant</h2>
+  <label class="field">
+    <span>URL</span>
+    <input type="url" id="ha-url" placeholder="http://homeassistant.local:8123"
+           value="{{ home_assistant_url }}">
+  </label>
+  <label class="field" style="margin-top:.75rem">
+    <span>Long-lived token</span>
+    <input type="password" id="ha-token" placeholder="Paste token here"
+           value="{{ home_assistant_token }}">
+  </label>
+  <label class="field" style="margin-top:.75rem">
+    <span>Default light entity</span>
+    <input type="text" id="ha-entity" placeholder="light.living_room"
+           value="{{ ha_entity_id }}">
+    <small class="muted">Used for "lights on/off" without a room name.</small>
+  </label>
+</section>
+
+{# ── Volume ────────────────────────────────────────────────────────────────── #}
+<section class="card" style="max-width:560px;margin-bottom:1.5rem">
+  <h2 class="card-title">Volume</h2>
+  <label class="field">
+    <span>ALSA control name</span>
+    <input type="text" id="alsa-control" value="{{ alsa_control }}">
+  </label>
+  <label class="field" style="margin-top:.75rem">
+    <span>Step % per command</span>
+    <input type="number" id="volume-step" min="1" max="50" value="{{ volume_step_pct }}">
+  </label>
+</section>
+
+{# ── Navidrome / Music ─────────────────────────────────────────────────────── #}
+<section class="card" style="max-width:560px;margin-bottom:1.5rem">
+  <h2 class="card-title">Music (Navidrome)</h2>
+  <p class="muted" style="margin-bottom:1rem">
+    Add your music files to the <code>./music</code> folder and start Navidrome with
+    <code>docker compose up navidrome</code>, then enter the credentials you chose
+    during Navidrome's first-run setup.
+  </p>
+  <label class="field">
+    <span>Navidrome URL</span>
+    <input type="url" id="nav-url" placeholder="http://navidrome:4533"
+           value="{{ navidrome_url }}">
+  </label>
+  <label class="field" style="margin-top:.75rem">
+    <span>Username</span>
+    <input type="text" id="nav-user" value="{{ navidrome_user }}">
+  </label>
+  <label class="field" style="margin-top:.75rem">
+    <span>Password</span>
+    <input type="password" id="nav-password" placeholder="••••••••"
+           value="{{ navidrome_password }}">
+  </label>
+</section>
+
+<div style="display:flex;gap:.75rem;align-items:center">
+  <button class="btn" onclick="saveAll()">Save</button>
+  <span id="save-msg" style="display:none;color:var(--green)">Saved!</span>
+  <span id="save-err" style="display:none;color:var(--red)">Save failed.</span>
+</div>
+
+<script>
+let _lat   = {{ latitude | tojson }};
+let _lon   = {{ longitude | tojson }};
+let _name  = {{ location_display_name | tojson }};
+
+async function searchCity() {
+  const q = document.getElementById('city-query').value.trim();
+  if (!q) return;
+  const resp = await fetch('/api/skills/location-search?q=' + encodeURIComponent(q));
+  if (!resp.ok) { alert('Geocoding search failed'); return; }
+  const data  = await resp.json();
+  const items = (data.results || []);
+  const el    = document.getElementById('city-results');
+  if (!items.length) {
+    el.innerHTML = '<p class="muted">No results found.</p>';
+    return;
+  }
+  el.innerHTML = items.map(r => {
+    const label = [r.name, r.admin1, r.country].filter(Boolean).join(', ');
+    const safeLabel = label.replace(/'/g, "\\'");
+    return `<button class="btn btn-secondary" style="margin:2px 4px 2px 0"
+      onclick="selectCity(${r.latitude}, ${r.longitude}, '${safeLabel}')">
+      ${label}
+    </button>`;
+  }).join('');
+}
+
+function selectCity(lat, lon, name) {
+  _lat  = lat;
+  _lon  = lon;
+  _name = name;
+  document.getElementById('city-results').innerHTML =
+    '<div class="alert alert-ok" style="margin-top:.5rem">Selected: <strong>' + name + '</strong></div>';
+}
+
+async function saveAll() {
+  const str = v => { const s = (v || '').trim(); return s || null; };
+  const body = {
+    latitude:               _lat,
+    longitude:              _lon,
+    location_display_name:  _name || null,
+    weather_api_base:       {{ weather_api_base | tojson }},
+    home_assistant_url:     str(document.getElementById('ha-url').value),
+    home_assistant_token:   str(document.getElementById('ha-token').value),
+    ha_entity_id:           str(document.getElementById('ha-entity').value),
+    ha_room_map:            {},
+    alsa_control:           document.getElementById('alsa-control').value || 'Master',
+    volume_step_pct:        parseInt(document.getElementById('volume-step').value, 10) || 10,
+    navidrome_url:          str(document.getElementById('nav-url').value),
+    navidrome_user:         str(document.getElementById('nav-user').value),
+    navidrome_password:     str(document.getElementById('nav-password').value),
+    update_check_enabled:   {{ update_check_enabled | tojson }},
+  };
+  const resp = await fetch('/api/settings/skills', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(body),
+  });
+  const msg = document.getElementById('save-msg');
+  const err = document.getElementById('save-err');
+  if (resp.ok) {
+    msg.style.display = 'inline'; err.style.display = 'none';
+    setTimeout(() => msg.style.display = 'none', 2000);
+  } else {
+    err.style.display = 'inline'; msg.style.display = 'none';
+    setTimeout(() => err.style.display = 'none', 3000);
+  }
+}
+</script>
+{% endblock %}

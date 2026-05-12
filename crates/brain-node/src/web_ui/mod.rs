@@ -5,13 +5,14 @@ mod templates;
 
 use crate::grpc::RagConfig;
 use crate::llm::LlmClient;
+use crate::ollama_updates::OllamaUpdateInfo;
 use crate::session::SessionRegistry;
-use crate::skills::SkillRegistry;
+use crate::skills::{SkillConfig, SkillRegistry};
 use crate::tts::TextToSpeech;
 use aether_core::{CommandTrie, TtsSettings};
 use axum::{
     http::StatusCode,
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse, Redirect, Response},
     routing::get,
     Router,
 };
@@ -41,12 +42,20 @@ pub struct AppState {
     pub voice_training: Arc<Mutex<VoiceTrainingState>>,
     pub model_settings: Arc<RwLock<ModelSettings>>,
     pub finetuning_url: Option<String>,
+    /// Shared HTTP client — one connection pool for all outbound requests (weather, HA, etc.).
+    pub http_client: reqwest::Client,
+    /// Skill configuration (location, HA, Navidrome, etc.) — persisted to skills.json.
+    pub skill_config: Arc<RwLock<SkillConfig>>,
+    /// LAN-accessible IP of the brain machine — used to construct Navidrome stream URLs.
+    pub brain_ip: String,
     /// Channel for pushing wake-word training progress to SSE subscribers.
     pub wake_progress_tx: Arc<tokio::sync::broadcast::Sender<ProgressEvent>>,
     /// Channel for pushing voice training progress to SSE subscribers.
     pub voice_progress_tx: Arc<tokio::sync::broadcast::Sender<ProgressEvent>>,
     /// Channel for pushing document ingestion progress to SSE subscribers.
     pub ingest_progress_tx: Arc<tokio::sync::broadcast::Sender<ProgressEvent>>,
+    /// Cached result of the last Ollama version check (updated by background task).
+    pub ollama_update: Arc<RwLock<OllamaUpdateInfo>>,
 }
 
 impl AppState {
@@ -64,12 +73,17 @@ impl AppState {
         documents_dir: Option<PathBuf>,
         ollama_url: String,
         finetuning_url: Option<String>,
+        brain_ip: String,
     ) -> Self {
         let (wake_tx, _) = tokio::sync::broadcast::channel(64);
         let (voice_tx, _) = tokio::sync::broadcast::channel(64);
         let (ingest_tx, _) = tokio::sync::broadcast::channel(64);
 
         let model_settings = load_model_settings(&config_dir);
+
+        let existing_wake_samples = load_wake_samples_from_disk(&config_dir);
+
+        let skill_config = load_skill_config(&config_dir);
 
         Self {
             env: Arc::new(templates::build()),
@@ -84,14 +98,36 @@ impl AppState {
             config_dir,
             documents_dir,
             ollama_url,
-            wake_training: Arc::new(Mutex::new(WakeTrainingState::default())),
+            wake_training: Arc::new(Mutex::new(WakeTrainingState {
+                samples: existing_wake_samples,
+                ..Default::default()
+            })),
             voice_training: Arc::new(Mutex::new(VoiceTrainingState::default())),
             model_settings: Arc::new(RwLock::new(model_settings)),
             finetuning_url,
+            http_client: reqwest::Client::new(),
+            skill_config: Arc::new(RwLock::new(skill_config)),
             wake_progress_tx: Arc::new(wake_tx),
             voice_progress_tx: Arc::new(voice_tx),
             ingest_progress_tx: Arc::new(ingest_tx),
+            brain_ip,
+            ollama_update: Arc::new(RwLock::new(OllamaUpdateInfo::default())),
         }
+    }
+}
+
+pub fn load_skill_config(config_dir: &std::path::Path) -> SkillConfig {
+    let path = config_dir.join("skills.json");
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_skill_config(config_dir: &std::path::Path, config: &SkillConfig) {
+    let path = config_dir.join("skills.json");
+    if let Ok(json) = serde_json::to_string_pretty(config) {
+        let _ = std::fs::write(path, json);
     }
 }
 
@@ -101,6 +137,137 @@ fn load_model_settings(config_dir: &std::path::Path) -> ModelSettings {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
+}
+
+// ── Paired-node registry ───────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairedNode {
+    pub node_id: String,
+    pub paired_at: String,
+}
+
+pub fn load_paired_nodes(config_dir: &std::path::Path) -> Vec<PairedNode> {
+    let path = config_dir.join("paired_nodes.json");
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_paired_nodes(config_dir: &std::path::Path, nodes: &[PairedNode]) {
+    let path = config_dir.join("paired_nodes.json");
+    if let Ok(json) = serde_json::to_string_pretty(nodes) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+pub fn register_paired_node(config_dir: &std::path::Path, node_id: &str) {
+    let mut nodes = load_paired_nodes(config_dir);
+    if !nodes.iter().any(|n| n.node_id == node_id) {
+        nodes.push(PairedNode {
+            node_id: node_id.to_string(),
+            paired_at: chrono::Utc::now().to_rfc3339(),
+        });
+        save_paired_nodes(config_dir, &nodes);
+    }
+}
+
+// ── Wake sample persistence ────────────────────────────────────────────────────
+
+fn wake_samples_index(config_dir: &std::path::Path) -> std::path::PathBuf {
+    config_dir.join("wake_samples").join("index.json")
+}
+
+pub fn load_wake_samples_from_disk(config_dir: &std::path::Path) -> Vec<WakeSample> {
+    std::fs::read_to_string(wake_samples_index(config_dir))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_wake_samples_to_disk(config_dir: &std::path::Path, samples: &[WakeSample]) {
+    let path = wake_samples_index(config_dir);
+    // Ensure the directory exists before writing.
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(samples) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+pub fn remove_paired_node(config_dir: &std::path::Path, node_id: &str) {
+    let mut nodes = load_paired_nodes(config_dir);
+    nodes.retain(|n| n.node_id != node_id);
+    save_paired_nodes(config_dir, &nodes);
+}
+
+// ── Setup wizard state ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WizardStage {
+    BrainCheck,
+    Pairing,
+    WakeWord,
+    GoLive,
+    Complete,
+}
+
+impl WizardStage {
+    pub fn next(&self) -> Option<WizardStage> {
+        match self {
+            Self::BrainCheck => Some(Self::Pairing),
+            Self::Pairing => Some(Self::WakeWord),
+            Self::WakeWord => Some(Self::GoLive),
+            Self::GoLive => Some(Self::Complete),
+            Self::Complete => None,
+        }
+    }
+
+    pub fn index(&self) -> usize {
+        match self {
+            Self::BrainCheck => 0,
+            Self::Pairing => 1,
+            Self::WakeWord => 2,
+            Self::GoLive => 3,
+            Self::Complete => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WizardState {
+    pub stage: WizardStage,
+    pub target_node_id: Option<String>,
+    /// Path to the trained wake-word model on the brain (config dir).
+    pub wake_model_path: Option<String>,
+}
+
+impl Default for WizardState {
+    fn default() -> Self {
+        Self {
+            stage: WizardStage::BrainCheck,
+            target_node_id: None,
+            wake_model_path: None,
+        }
+    }
+}
+
+pub fn load_wizard_state(config_dir: &std::path::Path) -> WizardState {
+    let path = config_dir.join("setup_wizard.json");
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_wizard_state(config_dir: &std::path::Path, state: &WizardState) {
+    let path = config_dir.join("setup_wizard.json");
+    if let Ok(json) = serde_json::to_string_pretty(state) {
+        let _ = std::fs::write(path, json);
+    }
 }
 
 // ── Domain types ───────────────────────────────────────────────────────────────
@@ -219,11 +386,12 @@ pub enum LlmRouting {
 }
 
 /// Progress event emitted by training jobs and ingestion — subscribers render it as SSE data.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct ProgressEvent {
     pub percent: u8,
     pub message: String,
     pub done: bool,
+    pub error: bool,
 }
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -256,12 +424,19 @@ pub fn json_error(msg: impl Into<String>) -> axum::Json<serde_json::Value> {
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
+async fn root_redirect() -> Redirect {
+    Redirect::permanent("/ui/")
+}
+
 pub fn make_router(state: AppState) -> Router {
     Router::new()
+        // Root redirect
+        .route("/", get(root_redirect))
         // Static assets
         .route("/static/app.css", get(serve_css))
         .route("/static/app.js", get(serve_js))
         // Pages
+        .route("/ui/setup", get(pages::setup::handler))
         .route("/ui/", get(pages::dashboard::handler))
         .route("/ui", get(pages::dashboard::handler))
         .route("/ui/nodes", get(pages::nodes::list_handler))
@@ -270,6 +445,7 @@ pub fn make_router(state: AppState) -> Router {
         .route("/ui/skills", get(pages::skills::handler))
         .route("/ui/settings/tts", get(pages::settings::tts_handler))
         .route("/ui/settings/models", get(pages::settings::models_handler))
+        .route("/ui/settings/skills", get(pages::skills_settings::handler))
         .route(
             "/ui/training/wake-word",
             get(pages::training::wake_word_handler),
@@ -286,6 +462,21 @@ pub fn make_router(state: AppState) -> Router {
             "/events/documents/ingest",
             get(sse::ingest_progress_handler),
         )
+        // API — setup wizard
+        .route("/api/setup/status", get(api::setup::get_status))
+        .route(
+            "/api/setup/advance",
+            axum::routing::post(api::setup::advance_stage),
+        )
+        .route(
+            "/api/setup/node",
+            axum::routing::post(api::setup::set_target_node),
+        )
+        .route(
+            "/api/setup/wake-model",
+            axum::routing::post(api::setup::set_wake_model),
+        )
+        .route("/api/setup/reset", axum::routing::delete(api::setup::reset))
         // API — nodes
         .route("/api/nodes", get(api::nodes::list))
         .route(
@@ -312,6 +503,14 @@ pub fn make_router(state: AppState) -> Router {
         // API — skills
         .route("/api/skills", get(api::skills::list))
         .route("/api/skills/test", axum::routing::post(api::skills::test))
+        .route(
+            "/api/settings/skills",
+            get(api::skills_settings::get).post(api::skills_settings::save),
+        )
+        .route(
+            "/api/skills/location-search",
+            get(api::skills_settings::location_search),
+        )
         // API — settings
         .route(
             "/api/settings/tts",
@@ -332,6 +531,10 @@ pub fn make_router(state: AppState) -> Router {
         .route(
             "/api/settings/models/:name",
             axum::routing::delete(api::settings::remove_model),
+        )
+        .route(
+            "/api/ollama/update-check",
+            get(api::settings::get_ollama_update).post(api::settings::check_ollama_update),
         )
         // API — wake word training
         .route(

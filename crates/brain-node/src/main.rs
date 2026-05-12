@@ -5,6 +5,8 @@ mod ingest;
 mod integration_tests;
 mod llm;
 mod mdns_adv;
+mod navidrome;
+mod ollama_updates;
 mod pair;
 mod session;
 mod skills;
@@ -120,6 +122,9 @@ enum Command {
 
         #[arg(long, env = "BRAIN_CERTS_DIR", default_value = "/data/certs")]
         certs_dir: PathBuf,
+
+        #[arg(long, env = "BRAIN_CONFIG_DIR", default_value = "/data/config")]
+        config_dir: PathBuf,
     },
 
     /// Generate synthetic wake-word WAV samples via Kokoro TTS.
@@ -145,9 +150,15 @@ enum Command {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run())
+}
+
+async fn run() -> Result<()> {
     match Cli::parse().command {
         Command::Serve {
             port,
@@ -191,7 +202,11 @@ async fn main() -> Result<()> {
             })
             .await
         }
-        Command::Pair { port, certs_dir } => run_pair_server(port, certs_dir).await,
+        Command::Pair {
+            port,
+            certs_dir,
+            config_dir,
+        } => run_pair_server(port, certs_dir, config_dir).await,
         Command::GenerateWakeWordSamples {
             kokoro_model,
             output_dir,
@@ -239,6 +254,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         config_dir,
         finetuning_url,
     } = args;
+
     std::fs::create_dir_all(&config_dir).context("creating config dir")?;
     let local_ip = local_ip_address::local_ip().context("detecting local IP")?;
     tracing::info!(ip = %local_ip, "brain local address");
@@ -285,39 +301,75 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let tts_engine: Option<Arc<dyn tts::TextToSpeech>> = if let Some(model_path) = kokoro_model {
         let model_str = model_path
             .to_str()
-            .context("KOKORO_MODEL_PATH is not valid UTF-8")?;
+            .context("KOKORO_MODEL_PATH is not valid UTF-8")?
+            .to_owned();
         tracing::info!(model = %model_str, "loading Kokoro TTS model");
-        let k = tts::KokoroTts::new(model_str).context("loading Kokoro TTS model")?;
-        Some(Arc::new(k))
+        // ORT environment creation can deadlock on some aarch64/Docker Desktop setups.
+        // Apply a 60s timeout: if it hangs, disable TTS and continue so the web UI
+        // still starts. The idle ORT threads consume no CPU while sleeping.
+        let load_result = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            tokio::task::spawn_blocking(move || tts::KokoroTts::new(&model_str)),
+        )
+        .await;
+        match load_result {
+            Ok(Ok(Ok(k))) => Some(Arc::new(k)),
+            Ok(Ok(Err(e))) => {
+                tracing::error!("TTS model load failed: {e:#} — TTS disabled");
+                None
+            }
+            Ok(Err(e)) => {
+                tracing::error!("TTS init thread panicked: {e} — TTS disabled");
+                None
+            }
+            Err(_elapsed) => {
+                tracing::warn!(
+                    "TTS model load timed out after 60 s — TTS disabled (ORT init deadlock?)"
+                );
+                None
+            }
+        }
     } else {
         tracing::warn!("--kokoro-model not set — TTS disabled");
         None
     };
 
     // ── Qdrant / RAG ──────────────────────────────────────────────────────────
+    // QdrantStore uses reqwest::blocking — run all Qdrant I/O on a blocking
+    // thread to avoid occupying Tokio worker threads.
     let rag_config: Option<grpc::RagConfig> = if let Some(ref url) = qdrant_url {
         use vector_store::{QdrantStore, VectorStore, COLLECTION_DOCUMENTS, COLLECTION_HISTORY};
         tracing::info!(%url, "connecting to Qdrant");
-        let store = Arc::new(QdrantStore::new(url).context("creating Qdrant client")?)
-            as Arc<dyn VectorStore>;
 
-        // nomic-embed-text produces 768-dimensional vectors.
-        const EMBED_DIM: usize = 768;
-        store
-            .ensure_collection(COLLECTION_DOCUMENTS, EMBED_DIM)
-            .context("creating Qdrant documents collection")?;
-        store
-            .ensure_collection(COLLECTION_HISTORY, 1)
-            .context("creating Qdrant history collection")?;
+        let qdrant_url_str = url.clone();
+        let embed_url_clone = embed_url.clone();
+        let embed_model_clone = embed_model.clone();
+        let documents_dir_clone = documents_dir.clone();
 
-        // Ingest documents if a directory is configured.
-        if let Some(ref dir) = documents_dir {
-            tracing::info!(dir = %dir.display(), "ingesting documents");
-            match ingest::ingest_dir(dir, &store, &embed_url, &embed_model) {
-                Ok(n) => tracing::info!(chunks = n, "document ingestion complete"),
-                Err(e) => tracing::warn!("document ingestion failed: {e}"),
+        let store: Arc<dyn VectorStore> = tokio::task::spawn_blocking(move || {
+            // nomic-embed-text produces 768-dimensional vectors.
+            const EMBED_DIM: usize = 768;
+            let store =
+                Arc::new(QdrantStore::new(&qdrant_url_str).context("creating Qdrant client")?)
+                    as Arc<dyn VectorStore>;
+            store
+                .ensure_collection(COLLECTION_DOCUMENTS, EMBED_DIM)
+                .context("creating Qdrant documents collection")?;
+            store
+                .ensure_collection(COLLECTION_HISTORY, 1)
+                .context("creating Qdrant history collection")?;
+
+            if let Some(ref dir) = documents_dir_clone {
+                match ingest::ingest_dir(dir, &store, &embed_url_clone, &embed_model_clone) {
+                    Ok(n) => tracing::info!(chunks = n, "document ingestion complete"),
+                    Err(e) => tracing::warn!("document ingestion failed: {e}"),
+                }
             }
-        }
+            Ok::<_, anyhow::Error>(store)
+        })
+        .await
+        .context("Qdrant init thread panicked")?
+        .context("Qdrant setup failed")?;
 
         Some(grpc::RagConfig {
             store,
@@ -336,6 +388,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let registry = SessionRegistry::new();
     let trie = Arc::new(aether_core::CommandTrie::default());
     let skills = Arc::new(SkillRegistry::default());
+    let http_client = reqwest::Client::new();
 
     let web_state = web_ui::AppState::new(
         registry.clone(),
@@ -346,16 +399,37 @@ async fn serve(args: ServeArgs) -> Result<()> {
         trie.clone(),
         rag_config.clone(),
         certs_dir.clone(),
-        config_dir,
+        config_dir.clone(),
         documents_dir,
         ollama_url_for_ui,
         finetuning_url,
+        local_ip.to_string(),
     );
+
+    // Share the skill config between the gRPC service and the web UI.
+    let skill_config = web_state.skill_config.clone();
+
+    // Monthly Ollama update check — runs in the background; first check after 30 s
+    // to give Ollama time to start, then repeats every 30 days.
+    {
+        let update_slot = web_state.ollama_update.clone();
+        let http = web_state.http_client.clone();
+        let url = web_state.ollama_url.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            loop {
+                let info = ollama_updates::fetch_update_info(&url, &http).await;
+                *update_slot.write().await = info;
+                tokio::time::sleep(std::time::Duration::from_secs(30 * 24 * 3600)).await;
+            }
+        });
+    }
 
     let addr: SocketAddr = ([0, 0, 0, 0], port).into();
     let service = BrainService {
         registry,
         certs_dir,
+        config_dir,
         stt: stt_engine,
         trie,
         llm: llm_engine,
@@ -363,6 +437,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
         tts_settings,
         skills,
         rag: rag_config,
+        http_client,
+        skill_config,
+        brain_ip: local_ip.to_string(),
     };
 
     let _mdns = match local_ip {
@@ -437,14 +514,16 @@ fn generate_wake_word_samples(
     Ok(())
 }
 
-async fn run_pair_server(port: u16, certs_dir: PathBuf) -> Result<()> {
+async fn run_pair_server(port: u16, certs_dir: PathBuf, config_dir: PathBuf) -> Result<()> {
     let local_ip = local_ip_address::local_ip().context("detecting local IP")?;
     pair::ensure_certs(&certs_dir, local_ip).context("ensuring certs")?;
+    std::fs::create_dir_all(&config_dir).context("creating config dir")?;
 
     let addr: SocketAddr = ([0, 0, 0, 0], port).into();
     let service = BrainService {
         registry: SessionRegistry::new(),
         certs_dir,
+        config_dir: config_dir.clone(),
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
@@ -452,6 +531,9 @@ async fn run_pair_server(port: u16, certs_dir: PathBuf) -> Result<()> {
         tts_settings: Arc::new(RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
+        http_client: reqwest::Client::new(),
+        skill_config: Arc::new(RwLock::new(web_ui::load_skill_config(&config_dir))),
+        brain_ip: local_ip.to_string(),
     };
 
     tracing::info!(%addr, "pairing server listening (plain gRPC)");

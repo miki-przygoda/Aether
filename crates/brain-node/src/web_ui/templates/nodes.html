@@ -7,19 +7,33 @@
 <div class="table-wrap">
   <table>
     <thead>
-      <tr><th>Node ID</th><th>State</th><th>Actions</th></tr>
+      <tr><th>Node ID</th><th>Status</th><th>State</th><th>Paired</th><th>Actions</th></tr>
     </thead>
     <tbody>
       {% for node in nodes %}
       <tr>
         <td><strong>{{ node.node_id }}</strong></td>
-        <td><span class="badge badge-{{ node.state | lower }}">{{ node.state }}</span></td>
+        <td>
+          {% if node.online %}
+            <span class="badge badge-online">Online</span>
+          {% else %}
+            <span class="badge badge-offline">Offline</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if node.online %}
+            <span class="badge badge-{{ node.state | lower }}">{{ node.state }}</span>
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td class="muted">{% if node.paired_at %}{{ node.paired_at[:10] }}{% else %}—{% endif %}</td>
         <td>
           <button class="btn btn-sm btn-danger" onclick="unpairNode('{{ node.node_id }}')">Unpair</button>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="3" class="empty">No paired nodes. <a href="/ui/nodes/pair">Pair one now.</a></td></tr>
+      <tr><td colspan="5" class="empty">No paired nodes — <a href="/ui/nodes/pair" style="color:var(--accent)">pair one now</a>.</td></tr>
       {% endfor %}
     </tbody>
   </table>

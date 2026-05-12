@@ -1,10 +1,33 @@
 use serde::{Deserialize, Serialize};
 
 /// Outcome returned by a `Skill` handler.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SkillResult {
     /// Text the TTS engine should speak back to the user.
     pub spoken_reply: String,
+    /// If set, the gRPC handler sends a MusicCommand proto message to the Pi
+    /// before synthesising the spoken reply.
+    pub music_command: Option<MusicCommandResult>,
+}
+
+impl SkillResult {
+    /// Convenience constructor for skills that only need to speak a reply.
+    pub fn speak(reply: impl Into<String>) -> Self {
+        Self {
+            spoken_reply: reply.into(),
+            music_command: None,
+        }
+    }
+}
+
+/// Payload for a `MusicCommand` proto message sent to the edge node.
+/// The Pi uses `stream_url` to stream directly from Navidrome over LAN.
+#[derive(Debug, Clone)]
+pub struct MusicCommandResult {
+    pub action: String,     // "play", "pause", "stop"
+    pub stream_url: String, // MP3 stream URL, empty for pause/stop
+    pub title: String,
+    pub artist: String,
 }
 
 /// Structured response the LLM must emit for every turn.

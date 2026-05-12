@@ -1,0 +1,31 @@
+[package]
+name = "candle-core"
+version = "0.2.2"
+edition = "2021"
+description = "Minimalist ML framework."
+readme = "README.md"
+keywords = ["blas", "tensor", "machine-learning"]
+categories = ["science"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/huggingface/candle"
+
+[dependencies]
+byteorder = "1.4.3"
+gemm = { version = "0.16.0", package = "candle-gemm" }
+half = { version = "2.3.1", features = ["num-traits", "use-intrinsics"] }
+memmap2 = "0.7.1"
+num-traits = "0.2.15"
+num_cpus = "1.15.0"
+rand = "0.8.5"
+rand_distr = "0.4.3"
+rayon = "1.7.0"
+safetensors = "0.3.1"
+thiserror = "1"
+zip = { version = "0.6.6", default-features = false }
+
+[features]
+default = []
+cuda = []
+cudnn = []
+mkl = []
+accelerate = []

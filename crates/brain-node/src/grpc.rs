@@ -2,7 +2,7 @@ use crate::history::{self, Role};
 use crate::ingest;
 use crate::llm::LlmClient;
 use crate::session::SessionRegistry;
-use crate::skills::SkillRegistry;
+use crate::skills::{SkillConfig, SkillContext, SkillRegistry};
 use crate::stt::{bytes_to_f32le, SpeechToText};
 use crate::tts::TextToSpeech;
 use crate::vector_store::{VectorStore, COLLECTION_DOCUMENTS};
@@ -19,8 +19,8 @@ pub mod proto {
 }
 
 use proto::{
-    aether_brain_server::AetherBrain, brain_response, AudioChunk, BrainResponse, PairRequest,
-    PairResponse, SkillAction, TranscriptUpdate, TtsChunk,
+    aether_brain_server::AetherBrain, brain_response, AudioChunk, BrainResponse, MusicCommand,
+    PairRequest, PairResponse, SkillAction, TranscriptUpdate, TtsChunk, WakeWordModelUpdate,
 };
 
 /// Configuration for RAG and conversation history.
@@ -43,6 +43,7 @@ pub struct RagConfig {
 pub struct BrainService {
     pub registry: SessionRegistry,
     pub certs_dir: std::path::PathBuf,
+    pub config_dir: std::path::PathBuf,
     pub stt: Option<Arc<dyn SpeechToText>>,
     pub trie: Arc<CommandTrie>,
     pub llm: Option<Arc<dyn LlmClient>>,
@@ -51,6 +52,12 @@ pub struct BrainService {
     pub tts_settings: StdArc<RwLock<TtsSettings>>,
     pub skills: Arc<SkillRegistry>,
     pub rag: Option<RagConfig>,
+    /// Shared HTTP client for skill I/O (weather, Home Assistant, etc.).
+    pub http_client: reqwest::Client,
+    /// Live skill configuration — shared with web UI settings page.
+    pub skill_config: StdArc<RwLock<SkillConfig>>,
+    /// LAN-accessible IP of the brain machine, used for constructing Navidrome stream URLs.
+    pub brain_ip: String,
 }
 
 #[tonic::async_trait]
@@ -79,6 +86,9 @@ impl AetherBrain for BrainService {
         let tts_settings: StdArc<RwLock<TtsSettings>> = self.tts_settings.clone();
         let skills = self.skills.clone();
         let rag = self.rag.clone();
+        let http_client = self.http_client.clone();
+        let skill_config = self.skill_config.clone();
+        let brain_ip = self.brain_ip.clone();
 
         registry.register(node_id.clone()).await;
         registry.set_state(&node_id, NodeState::Listening).await;
@@ -86,21 +96,50 @@ impl AetherBrain for BrainService {
         let mut stream = request.into_inner();
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<BrainResponse, Status>>(32);
 
+        // Per-session push channel: allows deploy_wake_word to send model bytes
+        // to this node while it is mid-stream.
+        let (push_tx, mut push_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4);
+        registry.register_push(node_id.clone(), push_tx).await;
+
         tokio::spawn(async move {
+            // Deliver any TTS messages that were queued by timers while this
+            // node was offline — spoken before the current wake-word interaction.
+            for text in registry.drain_pending_tts(&nid).await {
+                tracing::info!(node_id = %nid, msg = %text, "delivering queued timer callback");
+                synthesise_and_send(&tx, tts.clone(), &text, &nid, tts_settings.clone()).await;
+            }
+
             let mut pcm_buf: Vec<f32> = Vec::new();
             let mut expected_seq = 0u64;
 
-            while let Ok(Some(chunk)) = stream.message().await {
-                if chunk.seq != expected_seq {
-                    tracing::warn!(
-                        node_id = %nid,
-                        expected = expected_seq,
-                        got = chunk.seq,
-                        "out-of-order PCM chunk"
-                    );
+            loop {
+                tokio::select! {
+                    result = stream.message() => {
+                        match result {
+                            Ok(Some(chunk)) => {
+                                if chunk.seq != expected_seq {
+                                    tracing::warn!(
+                                        node_id = %nid,
+                                        expected = expected_seq,
+                                        got = chunk.seq,
+                                        "out-of-order PCM chunk"
+                                    );
+                                }
+                                expected_seq = chunk.seq.wrapping_add(1);
+                                pcm_buf.extend(bytes_to_f32le(&chunk.pcm));
+                            }
+                            _ => break,
+                        }
+                    }
+                    Some(model_bytes) = push_rx.recv() => {
+                        tracing::info!(node_id = %nid, bytes = model_bytes.len(), "sending wake word model update");
+                        let _ = tx.send(Ok(BrainResponse {
+                            payload: Some(brain_response::Payload::WakeWordModel(
+                                WakeWordModelUpdate { model_bytes }
+                            )),
+                        })).await;
+                    }
                 }
-                expected_seq = chunk.seq.wrapping_add(1);
-                pcm_buf.extend(bytes_to_f32le(&chunk.pcm));
             }
 
             if let Some(stt) = stt {
@@ -127,24 +166,7 @@ impl AetherBrain for BrainService {
                             }))
                             .await;
 
-                        // Shared helper: send SkillAction then optionally synthesise TTS.
-                        let dispatch = {
-                            let tx = tx.clone();
-                            let tts = tts.clone();
-                            let skills = skills.clone();
-                            let nid2 = nid2.clone();
-                            move |action_str: String,
-                                  params: serde_json::Value,
-                                  params_json: String| {
-                                let skill_result = skills.dispatch(&action_str, &params);
-                                tracing::info!(
-                                    node_id = %nid2,
-                                    reply = %skill_result.spoken_reply,
-                                    "skill dispatched"
-                                );
-                                (tx, tts, skill_result.spoken_reply, action_str, params_json)
-                            }
-                        };
+                        let cfg = skill_config.read().await.clone();
 
                         match trie.classify(&t.text) {
                             ClassifyResult::Match(action) => {
@@ -155,22 +177,31 @@ impl AetherBrain for BrainService {
                                     "trie matched — dispatching directly"
                                 );
                                 let params = serde_json::Value::Object(Default::default());
-                                let (tx, tts, spoken_reply, action_str, params_json) =
-                                    dispatch(action_str, params, "{}".to_string());
+                                let ctx = SkillContext {
+                                    node_id: &nid2,
+                                    http_client: &http_client,
+                                    config: &cfg,
+                                    registry: &registry,
+                                    brain_ip: &brain_ip,
+                                };
+                                let skill_result =
+                                    skills.dispatch(&action_str, &params, &ctx).await;
+                                tracing::info!(node_id = %nid2, reply = %skill_result.spoken_reply, "skill dispatched");
                                 let _ = tx
                                     .send(Ok(BrainResponse {
                                         payload: Some(brain_response::Payload::Action(
                                             SkillAction {
                                                 action: action_str,
-                                                params_json,
+                                                params_json: "{}".to_string(),
                                             },
                                         )),
                                     }))
                                     .await;
+                                send_music_command(&tx, &skill_result).await;
                                 synthesise_and_send(
                                     &tx,
                                     tts.clone(),
-                                    &spoken_reply,
+                                    &skill_result.spoken_reply,
                                     &nid2,
                                     tts_settings.clone(),
                                 )
@@ -202,8 +233,16 @@ impl AetherBrain for BrainService {
                                             params["response"] =
                                                 serde_json::Value::String(resp.response);
                                             let params_json = params.to_string();
-                                            let (tx, tts, spoken_reply, action_str, params_json) =
-                                                dispatch(action_str, params, params_json);
+                                            let ctx = SkillContext {
+                                                node_id: &nid3_log,
+                                                http_client: &http_client,
+                                                config: &cfg,
+                                                registry: &registry,
+                                                brain_ip: &brain_ip,
+                                            };
+                                            let skill_result =
+                                                skills.dispatch(&action_str, &params, &ctx).await;
+                                            tracing::info!(node_id = %nid3_log, reply = %skill_result.spoken_reply, "skill dispatched");
                                             let _ = tx
                                                 .send(Ok(BrainResponse {
                                                     payload: Some(brain_response::Payload::Action(
@@ -214,10 +253,11 @@ impl AetherBrain for BrainService {
                                                     )),
                                                 }))
                                                 .await;
+                                            send_music_command(&tx, &skill_result).await;
                                             synthesise_and_send(
                                                 &tx,
                                                 tts.clone(),
-                                                &spoken_reply,
+                                                &skill_result.spoken_reply,
                                                 &nid3_log,
                                                 tts_settings.clone(),
                                             )
@@ -247,6 +287,7 @@ impl AetherBrain for BrainService {
                 }
             }
 
+            registry.unregister_push(&nid).await;
             registry.set_state(&nid, NodeState::Idle).await;
             registry.unregister(&nid).await;
             tracing::info!(node_id = %nid, "audio stream closed");
@@ -276,6 +317,7 @@ impl AetherBrain for BrainService {
         let issued = crate::pair::issue_client_cert(&node_id, &ca_key)
             .map_err(|e| Status::internal(format!("cert issuance: {e}")))?;
 
+        crate::web_ui::register_paired_node(&self.config_dir, &node_id);
         tracing::info!(node_id = %node_id, "client cert issued");
 
         Ok(Response::new(PairResponse {
@@ -370,6 +412,28 @@ fn ask_with_rag(
     }
 
     Ok(resp)
+}
+
+// ─── Music command helper ─────────────────────────────────────────────────────
+
+/// If `skill_result` contains a `music_command`, send it to the Pi before TTS.
+async fn send_music_command(
+    tx: &tokio::sync::mpsc::Sender<Result<BrainResponse, Status>>,
+    skill_result: &aether_core::SkillResult,
+) {
+    if let Some(cmd) = &skill_result.music_command {
+        tracing::info!(action = %cmd.action, title = %cmd.title, "sending MusicCommand to Pi");
+        let _ = tx
+            .send(Ok(BrainResponse {
+                payload: Some(brain_response::Payload::MusicCommand(MusicCommand {
+                    action: cmd.action.clone(),
+                    stream_url: cmd.stream_url.clone(),
+                    title: cmd.title.clone(),
+                    artist: cmd.artist.clone(),
+                })),
+            }))
+            .await;
+    }
 }
 
 // ─── TTS helper ───────────────────────────────────────────────────────────────

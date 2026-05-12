@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use tonic::Request;
@@ -130,10 +131,16 @@ pub fn build_mtls_channel(brain_addr: &str, config_dir: &Path) -> Result<Channel
 /// Open a bidirectional PCM stream to the brain.
 /// `pcm_rx` is the audio feed from cpal; this function drives it until the
 /// channel closes or an error occurs.
+///
+/// `music_handle` is a shared slot for the current music playback task.
+/// A `MusicCommand::play` aborts any existing task and spawns a new one;
+/// `pause` and `stop` abort the current task without replacement.
 pub async fn stream_audio(
     channel: Channel,
     node_id: &str,
     mut pcm_rx: tokio::sync::mpsc::Receiver<Vec<f32>>,
+    model_reload_tx: tokio::sync::mpsc::Sender<()>,
+    music_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 ) -> Result<()> {
     let mut client = AetherBrainClient::new(channel);
 
@@ -178,15 +185,36 @@ pub async fn stream_audio(
             Some(brain_response::Payload::WakeWordModel(update)) => {
                 tracing::info!(
                     bytes = update.model_bytes.len(),
-                    "wake word model update received — hot-reloading"
+                    "wake word model update received"
                 );
                 if let Ok(path) = std::env::var("AETHER_MODEL_PATH") {
                     match std::fs::write(&path, &update.model_bytes) {
-                        Ok(()) => tracing::info!(%path, "wake word model written"),
+                        Ok(()) => {
+                            tracing::info!(%path, "wake word model written — signalling hot-reload");
+                            let _ = model_reload_tx.send(()).await;
+                        }
                         Err(e) => tracing::warn!(%path, "failed to write model: {e}"),
                     }
                 } else {
                     tracing::warn!("AETHER_MODEL_PATH not set — cannot save model update");
+                }
+            }
+            Some(brain_response::Payload::MusicCommand(cmd)) => {
+                tracing::info!(action = %cmd.action, title = %cmd.title, "music command received");
+                // Abort any in-progress music playback task.
+                if let Ok(mut guard) = music_handle.lock() {
+                    if let Some(handle) = guard.take() {
+                        handle.abort();
+                    }
+                    if cmd.action == "play" && !cmd.stream_url.is_empty() {
+                        let url = cmd.stream_url.clone();
+                        let handle = tokio::spawn(async move {
+                            if let Err(e) = crate::playback::stream_http_audio(url).await {
+                                tracing::warn!("music playback error: {e}");
+                            }
+                        });
+                        *guard = Some(handle);
+                    }
                 }
             }
             None => {}

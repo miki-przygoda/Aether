@@ -10,7 +10,8 @@ services:
       - aether-certs:/data/certs
       - aether-config:/data/config
       - ./models:/models:ro
-      - ./documents:/documents:ro  # user corpus — files here are indexed into Qdrant
+      - ./documents:/documents  # user corpus — files here are indexed into Qdrant
+      - ./music:/music:ro       # local music library — drop FLAC/MP3/OPUS files here
     environment:
       BRAIN_GRPC_PORT: "50051"
       BRAIN_PAIR_PORT: "50052"
@@ -18,17 +19,19 @@ services:
       BRAIN_CERTS_DIR: /data/certs
       BRAIN_CONFIG_DIR: /data/config
       WHISPER_MODEL_PATH: /models/whisper/ggml-medium.bin
-      WHISPER_FALLBACK_MODEL_PATH: /models/whisper/distil-large-v3.bin
+      WHISPER_FALLBACK_MODEL_PATH: /models/whisper/large-v3-turbo.bin
       WHISPER_CONFIDENCE_THRESHOLD: "0.75"
       KOKORO_MODEL_PATH: /models/tts/kokoro-82m.onnx
       OLLAMA_BASE_URL: http://ollama:11434
       LLM_FAST_MODEL: llama3.2:3b
       EMBED_MODEL: nomic-embed-text
       ORT_DYLIB_PATH: /usr/local/lib/libonnxruntime.so
-      QDRANT_URL: http://qdrant:6334
+      QDRANT_URL: http://qdrant:6333
       HISTORY_TURNS: "10"
       DOCUMENTS_DIR: /documents
       FINETUNING_URL: http://finetuning:8000
+    devices:
+      - /dev/snd:/dev/snd   # ALSA — required for volume skill (amixer sset)
     depends_on:
       ollama:
         condition: service_healthy
@@ -45,7 +48,31 @@ services:
     profiles:
       - training  # only starts when explicitly requested: docker compose --profile training up finetuning
 
+  navidrome:
+    # Pin to a specific digest before deploying to avoid Docker Hub checks on restart.
+    # To update: docker pull deluan/navidrome:latest && docker inspect --format '{{index .RepoDigests 0}}' deluan/navidrome:latest
+    image: deluan/navidrome:latest
+    restart: unless-stopped
+    ports:
+      - "4533:4533"   # Web UI + Subsonic API — local network only
+    volumes:
+      - ./music:/music:ro
+      - navidrome-data:/data
+    environment:
+      ND_MUSICFOLDER: /music
+      ND_DATAFOLDER: /data
+      ND_LOGLEVEL: warn
+      ND_SCANSCHEDULE: "@every 1h"
+      ND_ENABLEDOWNLOADS: "false"
+      ND_ENABLESHARING: "false"
+      # External integrations — all disabled: none of these should phone home.
+      ND_LASTFM_ENABLED: "false"
+      ND_LISTENBRAINZ_ENABLED: "false"
+      ND_SPOTIFY_ID: ""
+
   ollama:
+    # Pin to a specific digest before deploying to avoid Docker Hub checks on restart.
+    # To update: docker pull ollama/ollama:latest && docker inspect --format '{{index .RepoDigests 0}}' ollama/ollama:latest
     image: ollama/ollama:latest
     restart: unless-stopped
     volumes:
@@ -76,6 +103,8 @@ services:
       start_period: 120s
 
   qdrant:
+    # Pin to a specific digest before deploying to avoid Docker Hub checks on restart.
+    # To update: docker pull qdrant/qdrant:latest && docker inspect --format '{{index .RepoDigests 0}}' qdrant/qdrant:latest
     image: qdrant/qdrant:latest
     restart: unless-stopped
     ports:
@@ -83,8 +112,10 @@ services:
       - "6334:6334"   # gRPC API
     volumes:
       - qdrant-data:/qdrant/storage
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"  # disable anonymous usage telemetry to telemetry.qdrant.io
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/readyz || exit 1"]
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/6333' 2>/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -109,6 +140,10 @@ volumes:
   ollama-data:
     # Named volume — caches Ollama model weights across restarts.
     # Delete to force a re-download of all Ollama models.
+
+  navidrome-data:
+    # Named volume — persists Navidrome's SQLite library database and scan cache.
+    # Safe to delete; Navidrome will re-scan ./music on next startup.
 
   qdrant-data:
     # Named volume — persists Qdrant vector store across restarts.

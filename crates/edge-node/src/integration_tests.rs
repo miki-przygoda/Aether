@@ -96,8 +96,12 @@ async fn wake_word_trigger_opens_stream_and_delivers_pcm() {
 
     let (pcm_tx, pcm_rx) = mpsc::channel::<Vec<f32>>(16);
 
+    let (dummy_reload_tx, _) = tokio::sync::mpsc::channel::<()>(1);
     tokio::spawn(async move {
-        stream_audio(channel, "test-pi", pcm_rx).await.unwrap();
+        let music_handle = std::sync::Arc::new(std::sync::Mutex::new(None));
+        stream_audio(channel, "test-pi", pcm_rx, dummy_reload_tx, music_handle)
+            .await
+            .unwrap();
     });
 
     // Send three chunks of fake 16 kHz mono PCM (512 f32 samples each).
@@ -183,8 +187,18 @@ async fn tts_chunk_received_and_dispatched() {
 
     let (pcm_tx, pcm_rx) = mpsc::channel::<Vec<f32>>(4);
 
-    let stream_result =
-        tokio::spawn(async move { stream_audio(channel, "tts-test-pi", pcm_rx).await });
+    let (dummy_reload_tx, _) = tokio::sync::mpsc::channel::<()>(1);
+    let stream_result = tokio::spawn(async move {
+        let music_handle = std::sync::Arc::new(std::sync::Mutex::new(None));
+        stream_audio(
+            channel,
+            "tts-test-pi",
+            pcm_rx,
+            dummy_reload_tx,
+            music_handle,
+        )
+        .await
+    });
 
     // Send one chunk then close.
     pcm_tx.send(vec![0.0f32; 512]).await.unwrap();

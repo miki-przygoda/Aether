@@ -23,6 +23,11 @@ pub fn build() -> minijinja::Environment<'static> {
     )
     .unwrap();
     env.add_template(
+        "settings_skills.html",
+        include_str!("templates/settings_skills.html"),
+    )
+    .unwrap();
+    env.add_template(
         "training_wake_word.html",
         include_str!("templates/training_wake_word.html"),
     )
@@ -32,5 +37,7 @@ pub fn build() -> minijinja::Environment<'static> {
         include_str!("templates/training_voice.html"),
     )
     .unwrap();
+    env.add_template("setup.html", include_str!("templates/setup.html"))
+        .unwrap();
     env
 }

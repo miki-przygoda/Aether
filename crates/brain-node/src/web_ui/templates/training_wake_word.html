@@ -7,11 +7,11 @@
 
   <!-- Step indicator -->
   <div class="steps">
-    <span class="step active" data-step="1">1 Select nodes</span>
-    <span class="step" data-step="2">2 Record samples</span>
-    <span class="step" data-step="3">3 Review</span>
-    <span class="step" data-step="4">4 Train</span>
-    <span class="step" data-step="5">5 Deploy</span>
+    <span class="step active" data-step="1" onclick="goStep(1)" style="cursor:pointer">1 Select nodes</span>
+    <span class="step" data-step="2" onclick="goStep(2)" style="cursor:pointer">2 Record samples</span>
+    <span class="step" data-step="3" onclick="goStep(3)" style="cursor:pointer">3 Review</span>
+    <span class="step" data-step="4" onclick="goStep(4)" style="cursor:pointer">4 Train</span>
+    <span class="step" data-step="5" onclick="goStep(5)" style="cursor:pointer">5 Deploy</span>
   </div>
 
   <!-- Step 1: Select target nodes -->
@@ -74,8 +74,9 @@
     <h2>Training</h2>
     <div class="progress"><div class="progress-fill" id="train-progress" style="width:0%"></div></div>
     <p id="train-msg" class="muted">Click train to begin.</p>
-    <button class="btn" id="train-btn" onclick="startTraining()">Train model</button>
-    <div style="margin-top:1.5rem">
+    <div id="train-error" class="alert alert-error" style="display:none;margin-top:.75rem"></div>
+    <div style="margin-top:1rem;display:flex;gap:.75rem;align-items:center">
+      <button class="btn" id="train-btn" onclick="startTraining()">Train model</button>
       <button class="btn btn-secondary" onclick="goStep(3)">Back</button>
     </div>
   </div>
@@ -84,14 +85,17 @@
   <div class="step-panel" id="step5">
     <h2>Deploy</h2>
     <p id="deploy-result">Training complete. Click deploy to push the model to selected nodes.</p>
-    <button class="btn" onclick="deployModel()">Deploy to nodes</button>
+    <div style="display:flex;gap:.75rem;align-items:center;margin-top:1rem">
+      <button class="btn" onclick="deployModel()">Deploy to nodes</button>
+      <button class="btn btn-secondary" onclick="goStep(4)">Back</button>
+    </div>
     <p id="deploy-msg" class="muted" style="margin-top:1rem"></p>
   </div>
 
 </div>
 
 <script>
-let mediaRecorder = null, audioChunks = [], recording = false;
+let mediaRecorder = null, audioChunks = [], recording = false, recordStart = 0;
 
 function goStep(n) {
   document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
@@ -103,6 +107,42 @@ function goStep(n) {
   if (n === 3) loadReview();
 }
 
+// Encode Float32Array PCM samples as a 16-bit mono WAV Blob.
+function encodeWav(samples, sampleRate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const v = new DataView(buf);
+  const str = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true);
+  str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, samples.length * 2, true);
+  let off = 44;
+  for (let i = 0; i < samples.length; i++, off += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+// Decode WebM/Opus blob → resample to 16 kHz mono → WAV Blob.
+async function webmToWav(webmBlob) {
+  const TARGET_SR = 16000;
+  const ab = await webmBlob.arrayBuffer();
+  const tmpCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const decoded = await tmpCtx.decodeAudioData(ab);
+  await tmpCtx.close();
+  const numOut = Math.ceil(decoded.duration * TARGET_SR);
+  const offCtx = new OfflineAudioContext(1, numOut, TARGET_SR);
+  const src = offCtx.createBufferSource();
+  src.buffer = decoded;
+  src.connect(offCtx.destination);
+  src.start(0);
+  const rendered = await offCtx.startRendering();
+  return encodeWav(rendered.getChannelData(0), TARGET_SR);
+}
+
 async function toggleRecord() {
   if (recording) {
     mediaRecorder.stop();
@@ -111,14 +151,18 @@ async function toggleRecord() {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   mediaRecorder = new MediaRecorder(stream);
   audioChunks = [];
+  recordStart = Date.now();
   mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
   mediaRecorder.onstop = async () => {
+    const durationMs = Date.now() - recordStart;
     stream.getTracks().forEach(t => t.stop());
     recording = false;
     document.getElementById('record-btn').textContent = '⏺ Start Recording';
-    const blob = new Blob(audioChunks, { type: 'audio/wav' });
+    const webmBlob = new Blob(audioChunks, { type: 'audio/webm' });
+    const wavBlob = await webmToWav(webmBlob);
     const form = new FormData();
-    form.append('audio', blob, 'sample.wav');
+    form.append('audio', wavBlob, 'sample.wav');
+    form.append('duration_ms', durationMs);
     const resp = await fetch('/api/training/wake-word/samples', { method: 'POST', body: form });
     if (resp.ok) {
       const s = await resp.json();
@@ -145,7 +189,16 @@ function addSampleCard(s) {
 
 async function deleteSample(id) {
   const resp = await fetch('/api/training/wake-word/samples/' + id, { method: 'DELETE' });
-  if (resp.ok) document.getElementById('sc-' + id)?.remove();
+  if (resp.ok) {
+    document.getElementById('sc-' + id)?.remove();
+    updateSampleCount();
+  }
+}
+
+function updateSampleCount() {
+  const count = document.querySelectorAll('.sample-card').length;
+  document.getElementById('sample-count-label').textContent = count + ' / 15 samples recorded';
+  document.getElementById('sample-progress').style.width = Math.min(count / 15 * 100, 100) + '%';
 }
 
 async function loadReview() {
@@ -159,7 +212,11 @@ async function loadReview() {
 }
 
 async function startTraining() {
-  document.getElementById('train-btn').disabled = true;
+  const btn = document.getElementById('train-btn');
+  const errEl = document.getElementById('train-error');
+  btn.disabled = true;
+  errEl.style.display = 'none';
+
   const es = new EventSource('/events/training/wake-word');
   es.onmessage = function(e) {
     try {
@@ -168,7 +225,13 @@ async function startTraining() {
       document.getElementById('train-msg').textContent = data.message;
       if (data.done) {
         es.close();
-        setTimeout(() => goStep(5), 1000);
+        if (data.error) {
+          errEl.textContent = data.message;
+          errEl.style.display = 'block';
+          btn.disabled = false;
+        } else {
+          setTimeout(() => goStep(5), 800);
+        }
       }
     } catch (_) {}
   };

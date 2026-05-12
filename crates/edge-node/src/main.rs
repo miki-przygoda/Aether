@@ -13,6 +13,7 @@ use aether_core::NodeState;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 
 #[derive(Parser)]
@@ -178,6 +179,14 @@ async fn run(model_path: PathBuf, config_dir: PathBuf, state_port: u16) -> Resul
     let (audio_tx, mut audio_rx) = mpsc::channel::<Vec<f32>>(64);
     let _stream = audio::start_capture(audio_tx)?;
 
+    // Channel used by stream_audio to signal that a new wake word model was
+    // received and written to disk — main loop rebuilds the detector on next idle.
+    let (model_reload_tx, mut model_reload_rx) = mpsc::channel::<()>(4);
+
+    // Shared slot for the current music playback task — allows pause/stop
+    // commands to abort mid-track playback from any subsequent wake-word session.
+    let music_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
+
     publish_state(&state_tx, NodeState::Idle);
     tracing::info!("listening for wake word…");
 
@@ -205,8 +214,11 @@ async fn run(model_path: PathBuf, config_dir: PathBuf, state_port: u16) -> Resul
 
         let node_id = cfg.node_id.clone();
         let ch = channel.clone();
-        let mut stream_task =
-            tokio::spawn(async move { brain_conn::stream_audio(ch, &node_id, pcm_rx).await });
+        let reload_tx = model_reload_tx.clone();
+        let music_handle_clone = music_handle.clone();
+        let mut stream_task = tokio::spawn(async move {
+            brain_conn::stream_audio(ch, &node_id, pcm_rx, reload_tx, music_handle_clone).await
+        });
 
         let mut kill_rx = kill_tx.subscribe();
         publish_state(&state_tx, NodeState::Processing);
@@ -229,6 +241,20 @@ async fn run(model_path: PathBuf, config_dir: PathBuf, state_port: u16) -> Resul
                     stream_task.abort();
                     break 'stream;
                 }
+            }
+        }
+
+        // If a model update arrived during this session, rebuild the detector
+        // now so the next wake word cycle uses the new model.
+        if model_reload_rx.try_recv().is_ok() {
+            // Drain any extra signals (in case multiple updates arrived).
+            while model_reload_rx.try_recv().is_ok() {}
+            match wake_word::build(&model_path) {
+                Ok(d) => {
+                    detector = d;
+                    tracing::info!("wake word detector hot-reloaded from updated model");
+                }
+                Err(e) => tracing::warn!("failed to reload wake word model: {e}"),
             }
         }
 
