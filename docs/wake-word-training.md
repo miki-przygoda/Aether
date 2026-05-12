@@ -4,11 +4,11 @@ Aether uses [rustpotter](https://github.com/GiviMAD/rustpotter) for wake word de
 
 ## Prerequisites
 
-| Tool | Install |
-|---|---|
-| Kokoro TTS model | `./scripts/download-models.sh` |
-| rustpotter CLI | `cargo install rustpotter-cli` |
-| espeak-ng | `apt install espeak-ng` / `brew install espeak` |
+| Tool             | Install                                         |
+|------------------|-------------------------------------------------|
+| Kokoro TTS model | `./scripts/download-models.sh`                  |
+| rustpotter CLI   | `cargo install rustpotter-cli`                  |
+| espeak-ng        | `apt install espeak-ng` / `brew install espeak` |
 
 ## Step 1 — Generate synthetic samples
 
@@ -70,11 +70,11 @@ rustpotter-cli test \
 
 Speak "Hey Aether" into your microphone. A score above the threshold triggers detection. Adjust `--threshold` to trade off false positives vs. missed detections:
 
-| Threshold | Effect |
-|---|---|
-| 0.3–0.4 | More sensitive — fewer misses, more false triggers |
-| 0.5 | Balanced (recommended starting point) |
-| 0.6–0.7 | More precise — fewer false triggers, may miss quiet speech |
+| Threshold | Effect                                                     |
+|-----------|------------------------------------------------------------|
+| 0.3–0.4   | More sensitive — fewer misses, more false triggers         |
+| 0.5       | Balanced (recommended starting point)                      |
+| 0.6–0.7   | More precise — fewer false triggers, may miss quiet speech |
 
 ## Step 5 — Deploy to the edge node
 
