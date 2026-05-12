@@ -23,7 +23,7 @@ Edge nodes discover the brain automatically over your local network via mDNS. Al
                                                                         │
     Wake word detected → mTLS gRPC stream ───────────────────────────►  │
                                                                         │  Brain Node
-                         WAV response ◄──────────────────────────────►  │  (Docker Compose)
+                         WAV response ◄───────────────────────────────  │  (Docker Compose)
                                                                         │
     Speaker ← playback                                                  │   Whisper  ·  Ollama  ·  Kokoro
                                                                         │   Qdrant (RAG + history)
@@ -49,7 +49,7 @@ The brain serves a self-hosted web UI at port 8080 — use it from any browser o
 Clone the repository and download the AI model weights, then start the brain with Docker Compose.
 
 ```bash
-git clone https://github.com/your-org/aether
+git clone https://github.com/miki-przygoda/Aether
 cd Aether
 
 # Download Whisper and Kokoro model weights (~2 GB)
@@ -77,13 +77,48 @@ A setup wizard will guide you through the remaining steps.
 
 ### 2. Install the Edge Node on Your Pi
 
-On your development machine, cross-compile the edge-node binary for ARM and deploy it to the Pi in one step:
+The deploy script cross-compiles `edge-node` for ARM on your development machine and copies the binary to the Pi over SSH. Before running it, set the two environment variables it needs:
+
+| Variable | Description | Example |
+|:---|:---|:---|
+| `AETHER_PI_HOST` | SSH target in `user@host` form | `pi@raspberrypi.local` |
+| `AETHER_PI_ARCH` | Cross-compile target (optional) | `aarch64-unknown-linux-gnu` *(default)* |
+
+The easiest way is to create a `.env` file in the repo root so you never have to type them again:
 
 ```bash
-./scripts/deploy-edge.sh
+# .env  (already in .gitignore — safe to store here)
+AETHER_PI_HOST=pi@raspberrypi.local
+AETHER_PI_ARCH=aarch64-unknown-linux-gnu
 ```
 
-This compiles `edge-node` with `cross-rs`, copies the binary to your Pi over SSH, and installs it as a systemd service. See the script header for the environment variables it reads (`EDGE_HOST`, `EDGE_USER`, `EDGE_PATH`).
+Then deploy:
+
+```bash
+source .env && ./scripts/deploy-edge.sh
+```
+
+The script builds the binary with `cross` if it is not already present, then copies it to `/usr/local/bin/edge-node` on the Pi via `scp`. SSH key-based authentication is assumed — if you have not set up an SSH key for your Pi yet, run `ssh-copy-id pi@raspberrypi.local` first.
+
+To run the edge node automatically on boot, add a systemd unit on the Pi after deploying:
+
+```bash
+sudo tee /etc/systemd/system/aether-edge.service > /dev/null <<'EOF'
+[Unit]
+Description=Aether edge node
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/edge-node run --model-path /home/pi/.config/aether/hey-aether.rpw
+Restart=on-failure
+Environment=AETHER_MODEL_PATH=/home/pi/.config/aether/hey-aether.rpw
+User=pi
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload && sudo systemctl enable --now aether-edge
+```
 
 ---
 
@@ -118,7 +153,7 @@ edge-node run \
 
 The Pi will begin listening for the wake word immediately. Speak the phrase, ask a question, and Aether will respond through the speaker.
 
-To run the edge node as a service so it starts automatically on boot, use the systemd unit file installed by `deploy-edge.sh`.
+If you installed the systemd unit in step 2, the edge node starts automatically on boot and restarts on failure — no manual intervention needed.
 
 ---
 
