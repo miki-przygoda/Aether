@@ -1,3 +1,4 @@
+#![allow(dead_code, mismatched_lifetime_syntaxes)]
 //! ML framework for Rust
 //!
 //! ```rust
