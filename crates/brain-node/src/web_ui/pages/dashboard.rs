@@ -1,4 +1,6 @@
-use crate::web_ui::{load_paired_nodes, load_wizard_state, render, AppResult, AppState, WizardStage};
+use crate::web_ui::{
+    load_paired_nodes, load_wizard_state, render, AppResult, AppState, WizardStage,
+};
 use axum::{extract::State, response::Html};
 use minijinja::context;
 

@@ -13,7 +13,10 @@ pub struct SkillResult {
 impl SkillResult {
     /// Convenience constructor for skills that only need to speak a reply.
     pub fn speak(reply: impl Into<String>) -> Self {
-        Self { spoken_reply: reply.into(), music_command: None }
+        Self {
+            spoken_reply: reply.into(),
+            music_command: None,
+        }
     }
 }
 

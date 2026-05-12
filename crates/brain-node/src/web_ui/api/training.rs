@@ -35,7 +35,7 @@ pub async fn upload_wake_sample(
                 let text = field.text().await.unwrap_or_default();
                 duration_ms = text.parse().unwrap_or(0);
             }
-            Some("audio") | _ => {
+            _ => {
                 let name = field.file_name().unwrap_or("sample.webm").to_string();
                 let data = field
                     .bytes()
@@ -316,8 +316,7 @@ fn generate_tts_augments(
                 Err(e) => tracing::warn!(speed, "TTS WAV decode failed: {e}"),
                 Ok((samples_f32, src_rate)) => {
                     let resampled = resample_linear(&samples_f32, src_rate, 16_000);
-                    let samples_i16: Vec<i16> =
-                        resampled.iter().map(|&s| f32_to_i16(s)).collect();
+                    let samples_i16: Vec<i16> = resampled.iter().map(|&s| f32_to_i16(s)).collect();
                     let out = tmp_dir.join(format!("tts_{i}.wav"));
                     match write_wav_i16(&out, &samples_i16, 16_000) {
                         Ok(()) => paths.push(out),
@@ -429,7 +428,7 @@ fn f32_to_i16(s: f32) -> i16 {
 // ── rustpotter model build ────────────────────────────────────────────────────
 
 /// Build a rustpotter DTW reference model from the supplied WAV paths (already trimmed/resampled).
-fn build_wakeword_ref(phrase: &str, samples: &[PathBuf], output: &PathBuf) -> anyhow::Result<()> {
+fn build_wakeword_ref(phrase: &str, samples: &[PathBuf], output: &FsPath) -> anyhow::Result<()> {
     use rustpotter::{WakewordRef, WakewordRefBuildFromFiles, WakewordSave};
 
     let wav_paths: Vec<String> = samples
@@ -437,15 +436,17 @@ fn build_wakeword_ref(phrase: &str, samples: &[PathBuf], output: &PathBuf) -> an
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
 
-    tracing::info!(count = wav_paths.len(), "calling rustpotter WakewordRef::new_from_sample_files");
+    tracing::info!(
+        count = wav_paths.len(),
+        "calling rustpotter WakewordRef::new_from_sample_files"
+    );
 
     let wakeword =
         WakewordRef::new_from_sample_files(phrase.to_string(), None, None, wav_paths, 40)
             .map_err(|e| anyhow::anyhow!("rustpotter: {e}"))?;
 
     if let Some(parent) = output.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| anyhow::anyhow!("create models dir: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| anyhow::anyhow!("create models dir: {e}"))?;
     }
 
     wakeword
@@ -753,8 +754,8 @@ mod tests {
     use crate::session::SessionRegistry;
     use crate::skills::SkillRegistry;
     use crate::web_ui::{
-        AppState, ModelSettings, ProgressEvent, TrainingStatus, VoiceTrainingState,
-        WakeTrainingState, WakeSample,
+        AppState, ModelSettings, ProgressEvent, TrainingStatus, VoiceTrainingState, WakeSample,
+        WakeTrainingState,
     };
     use aether_core::{CommandTrie, TtsSettings};
     use axum::extract::{Json, State};
@@ -790,7 +791,9 @@ mod tests {
             voice_progress_tx: Arc::new(voice_tx),
             ingest_progress_tx: Arc::new(ingest_tx),
             brain_ip: "127.0.0.1".into(),
-            ollama_update: Arc::new(RwLock::new(crate::ollama_updates::OllamaUpdateInfo::default())),
+            ollama_update: Arc::new(RwLock::new(
+                crate::ollama_updates::OllamaUpdateInfo::default(),
+            )),
         }
     }
 
@@ -811,18 +814,27 @@ mod tests {
     #[test]
     fn trim_silence_strips_leading_and_trailing_silence() {
         let sr = 16_000u32;
-        let silence = sr as usize;                        // 1 s = 16 000 samples
-        let speech = (sr as usize * 200) / 1_000;        // 200 ms = 3 200 samples
+        let silence = sr as usize; // 1 s = 16 000 samples
+        let speech = (sr as usize * 200) / 1_000; // 200 ms = 3 200 samples
         let mut samples = vec![0i16; silence];
-        samples.extend(vec![8_000i16; speech]);           // loud speech
+        samples.extend(vec![8_000i16; speech]); // loud speech
         samples.extend(vec![0i16; silence]);
 
         let (start, end) = trim_silence(&samples, sr);
-        assert!(start < silence, "leading silence must be trimmed: start={start}");
-        assert!(end > silence + speech, "trailing silence must be trimmed: end={end}");
+        assert!(
+            start < silence,
+            "leading silence must be trimmed: start={start}"
+        );
+        assert!(
+            end > silence + speech,
+            "trailing silence must be trimmed: end={end}"
+        );
         assert!(end <= samples.len());
         // With 2 s of silence and only 200 ms of speech, the trim should remove >50%.
-        assert!(end - start < samples.len() / 2, "trimmed region should be <50% of full buffer");
+        assert!(
+            end - start < samples.len() / 2,
+            "trimmed region should be <50% of full buffer"
+        );
     }
 
     #[test]
@@ -831,7 +843,10 @@ mod tests {
         let out = resample_linear(&samples, 16_000, 16_000);
         assert_eq!(out.len(), samples.len());
         for (a, b) in samples.iter().zip(out.iter()) {
-            assert!((a - b).abs() < 1e-6, "values must match for pass-through resample");
+            assert!(
+                (a - b).abs() < 1e-6,
+                "values must match for pass-through resample"
+            );
         }
     }
 
@@ -868,15 +883,15 @@ mod tests {
 
     #[test]
     fn wav_duration_ms_returns_zero_for_short_data() {
-        assert_eq!(wav_duration_ms(&vec![0u8; 20]), 0);
+        assert_eq!(wav_duration_ms(&[0u8; 20]), 0);
     }
 
     #[test]
     fn wav_duration_ms_returns_zero_for_zero_sample_rate() {
         let mut data = vec![0u8; 64];
-        data[22..24].copy_from_slice(&1u16.to_le_bytes());   // channels = 1
-        data[34..36].copy_from_slice(&16u16.to_le_bytes());  // bits_per_sample = 16
-        // sample_rate at [24..28] stays 0
+        data[22..24].copy_from_slice(&1u16.to_le_bytes()); // channels = 1
+        data[34..36].copy_from_slice(&16u16.to_le_bytes()); // bits_per_sample = 16
+                                                            // sample_rate at [24..28] stays 0
         assert_eq!(wav_duration_ms(&data), 0);
     }
 
@@ -912,8 +927,12 @@ mod tests {
         // 50 ms silent WAV: trim returns (0, 800); 800 ≤ 1600 (100 ms) → falls back
         write_wav_i16(&wav_path, &vec![0i16; 800], 16_000).unwrap();
         let out = TempDir::new().unwrap();
-        let result = prepare_user_samples(&[wav_path.clone()], out.path());
-        assert_eq!(result, vec![wav_path], "short samples must fall back to original path");
+        let result = prepare_user_samples(std::slice::from_ref(&wav_path), out.path());
+        assert_eq!(
+            result,
+            vec![wav_path],
+            "short samples must fall back to original path"
+        );
     }
 
     #[test]
@@ -923,9 +942,12 @@ mod tests {
         // 200 ms silent WAV: trim returns full range (> 100 ms) → copies to tmp dir
         write_wav_i16(&wav_path, &vec![0i16; 3_200], 16_000).unwrap();
         let out = TempDir::new().unwrap();
-        let result = prepare_user_samples(&[wav_path.clone()], out.path());
+        let result = prepare_user_samples(std::slice::from_ref(&wav_path), out.path());
         assert_eq!(result.len(), 1);
-        assert_ne!(result[0], wav_path, "should return copy in tmp dir, not original");
+        assert_ne!(
+            result[0], wav_path,
+            "should return copy in tmp dir, not original"
+        );
         assert!(result[0].exists(), "copied file must exist on disk");
     }
 
@@ -978,7 +1000,10 @@ mod tests {
                     size_bytes: 1_000,
                 });
             }
-            t.status = TrainingStatus::Running { progress: 50, message: "in progress".into() };
+            t.status = TrainingStatus::Running {
+                progress: 50,
+                message: "in progress".into(),
+            };
         }
         let err = train_wake_word(State(state), Json(TrainWakeWordBody { phrase: None }))
             .await
@@ -1016,7 +1041,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let err = train_voice(
             State(make_state(tmp.path(), None)),
-            Json(TrainVoiceBody { user_id: "u1".into() }),
+            Json(TrainVoiceBody {
+                user_id: "u1".into(),
+            }),
         )
         .await
         .unwrap_err();
@@ -1028,7 +1055,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let err = train_voice(
             State(make_state(tmp.path(), Some("http://localhost:9999".into()))),
-            Json(TrainVoiceBody { user_id: "ghost".into() }),
+            Json(TrainVoiceBody {
+                user_id: "ghost".into(),
+            }),
         )
         .await
         .unwrap_err();
@@ -1041,7 +1070,9 @@ mod tests {
         let state = make_state(tmp.path(), Some("http://localhost:9999".into()));
         let Json(user) = create_voice_user(
             State(state.clone()),
-            Json(CreateUserBody { name: "Charlie".into() }),
+            Json(CreateUserBody {
+                name: "Charlie".into(),
+            }),
         )
         .await;
         let err = train_voice(State(state), Json(TrainVoiceBody { user_id: user.id }))
@@ -1068,7 +1099,9 @@ mod tests {
         let state = make_state(tmp.path(), None);
         let Json(user) = create_voice_user(
             State(state.clone()),
-            Json(CreateUserBody { name: "Alice".into() }),
+            Json(CreateUserBody {
+                name: "Alice".into(),
+            }),
         )
         .await;
         assert_eq!(user.name, "Alice");
@@ -1086,7 +1119,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let Json(user) = create_voice_user(
             State(make_state(tmp.path(), None)),
-            Json(CreateUserBody { name: String::new() }),
+            Json(CreateUserBody {
+                name: String::new(),
+            }),
         )
         .await;
         assert_eq!(user.name, "");
@@ -1109,17 +1144,19 @@ mod tests {
         let state = make_state(tmp.path(), None);
         let Json(user) = create_voice_user(
             State(state.clone()),
-            Json(CreateUserBody { name: "Dave".into() }),
+            Json(CreateUserBody {
+                name: "Dave".into(),
+            }),
         )
         .await;
-        let status = delete_voice_user(
-            axum::extract::Path(user.id.clone()),
-            State(state.clone()),
-        )
-        .await;
+        let status =
+            delete_voice_user(axum::extract::Path(user.id.clone()), State(state.clone())).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
         let Json(users) = list_voice_users(State(state)).await;
-        assert!(users.iter().all(|u| u.id != user.id), "deleted user must not be listed");
+        assert!(
+            users.iter().all(|u| u.id != user.id),
+            "deleted user must not be listed"
+        );
     }
 
     #[tokio::test]

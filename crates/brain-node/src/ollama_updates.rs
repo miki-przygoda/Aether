@@ -41,10 +41,7 @@ pub async fn fetch_update_info(ollama_url: &str, http: &reqwest::Client) -> Olla
     }
 }
 
-async fn fetch_current_version(
-    ollama_url: &str,
-    http: &reqwest::Client,
-) -> anyhow::Result<String> {
+async fn fetch_current_version(ollama_url: &str, http: &reqwest::Client) -> anyhow::Result<String> {
     let body: serde_json::Value = http
         .get(format!("{ollama_url}/api/version"))
         .timeout(std::time::Duration::from_secs(5))

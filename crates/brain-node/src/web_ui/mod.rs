@@ -219,20 +219,20 @@ impl WizardStage {
     pub fn next(&self) -> Option<WizardStage> {
         match self {
             Self::BrainCheck => Some(Self::Pairing),
-            Self::Pairing    => Some(Self::WakeWord),
-            Self::WakeWord   => Some(Self::GoLive),
-            Self::GoLive     => Some(Self::Complete),
-            Self::Complete   => None,
+            Self::Pairing => Some(Self::WakeWord),
+            Self::WakeWord => Some(Self::GoLive),
+            Self::GoLive => Some(Self::Complete),
+            Self::Complete => None,
         }
     }
 
     pub fn index(&self) -> usize {
         match self {
             Self::BrainCheck => 0,
-            Self::Pairing    => 1,
-            Self::WakeWord   => 2,
-            Self::GoLive     => 3,
-            Self::Complete   => 4,
+            Self::Pairing => 1,
+            Self::WakeWord => 2,
+            Self::GoLive => 3,
+            Self::Complete => 4,
         }
     }
 }
@@ -464,9 +464,18 @@ pub fn make_router(state: AppState) -> Router {
         )
         // API — setup wizard
         .route("/api/setup/status", get(api::setup::get_status))
-        .route("/api/setup/advance", axum::routing::post(api::setup::advance_stage))
-        .route("/api/setup/node", axum::routing::post(api::setup::set_target_node))
-        .route("/api/setup/wake-model", axum::routing::post(api::setup::set_wake_model))
+        .route(
+            "/api/setup/advance",
+            axum::routing::post(api::setup::advance_stage),
+        )
+        .route(
+            "/api/setup/node",
+            axum::routing::post(api::setup::set_target_node),
+        )
+        .route(
+            "/api/setup/wake-model",
+            axum::routing::post(api::setup::set_wake_model),
+        )
         .route("/api/setup/reset", axum::routing::delete(api::setup::reset))
         // API — nodes
         .route("/api/nodes", get(api::nodes::list))
@@ -525,8 +534,7 @@ pub fn make_router(state: AppState) -> Router {
         )
         .route(
             "/api/ollama/update-check",
-            get(api::settings::get_ollama_update)
-                .post(api::settings::check_ollama_update),
+            get(api::settings::get_ollama_update).post(api::settings::check_ollama_update),
         )
         // API — wake word training
         .route(

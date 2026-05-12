@@ -184,7 +184,8 @@ impl AetherBrain for BrainService {
                                     registry: &registry,
                                     brain_ip: &brain_ip,
                                 };
-                                let skill_result = skills.dispatch(&action_str, &params, &ctx).await;
+                                let skill_result =
+                                    skills.dispatch(&action_str, &params, &ctx).await;
                                 tracing::info!(node_id = %nid2, reply = %skill_result.spoken_reply, "skill dispatched");
                                 let _ = tx
                                     .send(Ok(BrainResponse {
@@ -197,7 +198,14 @@ impl AetherBrain for BrainService {
                                     }))
                                     .await;
                                 send_music_command(&tx, &skill_result).await;
-                                synthesise_and_send(&tx, tts.clone(), &skill_result.spoken_reply, &nid2, tts_settings.clone()).await;
+                                synthesise_and_send(
+                                    &tx,
+                                    tts.clone(),
+                                    &skill_result.spoken_reply,
+                                    &nid2,
+                                    tts_settings.clone(),
+                                )
+                                .await;
                             }
                             _ => {
                                 if let Some(llm) = llm {
@@ -232,7 +240,8 @@ impl AetherBrain for BrainService {
                                                 registry: &registry,
                                                 brain_ip: &brain_ip,
                                             };
-                                            let skill_result = skills.dispatch(&action_str, &params, &ctx).await;
+                                            let skill_result =
+                                                skills.dispatch(&action_str, &params, &ctx).await;
                                             tracing::info!(node_id = %nid3_log, reply = %skill_result.spoken_reply, "skill dispatched");
                                             let _ = tx
                                                 .send(Ok(BrainResponse {
@@ -245,7 +254,14 @@ impl AetherBrain for BrainService {
                                                 }))
                                                 .await;
                                             send_music_command(&tx, &skill_result).await;
-                                            synthesise_and_send(&tx, tts.clone(), &skill_result.spoken_reply, &nid3_log, tts_settings.clone()).await;
+                                            synthesise_and_send(
+                                                &tx,
+                                                tts.clone(),
+                                                &skill_result.spoken_reply,
+                                                &nid3_log,
+                                                tts_settings.clone(),
+                                            )
+                                            .await;
                                         }
                                         Ok(Err(e)) => {
                                             tracing::error!(node_id = %nid3_log, "LLM error: {e}")

@@ -33,7 +33,9 @@ async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
         http_client: reqwest::Client::new(),
-        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::skills::SkillConfig::default(),
+        )),
         brain_ip: "127.0.0.1".into(),
     };
 
@@ -235,7 +237,9 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
         http_client: reqwest::Client::new(),
-        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::skills::SkillConfig::default(),
+        )),
         brain_ip: "127.0.0.1".into(),
     };
 
@@ -366,7 +370,9 @@ async fn stt_transcription_sends_transcript_update() {
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
         http_client: reqwest::Client::new(),
-        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::skills::SkillConfig::default(),
+        )),
         brain_ip: "127.0.0.1".into(),
     };
 
@@ -447,7 +453,9 @@ async fn trie_match_sends_skill_action() {
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
         http_client: reqwest::Client::new(),
-        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::skills::SkillConfig::default(),
+        )),
         brain_ip: "127.0.0.1".into(),
     };
 
@@ -547,7 +555,9 @@ async fn llm_invoked_on_trie_no_match_sends_skill_action() {
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
         http_client: reqwest::Client::new(),
-        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::skills::SkillConfig::default(),
+        )),
         brain_ip: "127.0.0.1".into(),
     };
 
@@ -655,7 +665,9 @@ async fn full_pipeline_pcm_to_tts_with_mocked_models() {
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
         http_client: reqwest::Client::new(),
-        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::skills::SkillConfig::default(),
+        )),
         brain_ip: "127.0.0.1".into(),
     };
 
@@ -771,7 +783,9 @@ async fn tts_chunk_sent_after_skill_action() {
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
         http_client: reqwest::Client::new(),
-        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::skills::SkillConfig::default(),
+        )),
         brain_ip: "127.0.0.1".into(),
     };
 

@@ -1,11 +1,11 @@
 mod grpc;
 mod history;
 mod ingest;
-mod navidrome;
 #[cfg(test)]
 mod integration_tests;
 mod llm;
 mod mdns_adv;
+mod navidrome;
 mod ollama_updates;
 mod pair;
 mod session;
@@ -202,7 +202,11 @@ async fn run() -> Result<()> {
             })
             .await
         }
-        Command::Pair { port, certs_dir, config_dir } => run_pair_server(port, certs_dir, config_dir).await,
+        Command::Pair {
+            port,
+            certs_dir,
+            config_dir,
+        } => run_pair_server(port, certs_dir, config_dir).await,
         Command::GenerateWakeWordSamples {
             kokoro_model,
             output_dir,
@@ -319,7 +323,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 None
             }
             Err(_elapsed) => {
-                tracing::warn!("TTS model load timed out after 60 s — TTS disabled (ORT init deadlock?)");
+                tracing::warn!(
+                    "TTS model load timed out after 60 s — TTS disabled (ORT init deadlock?)"
+                );
                 None
             }
         }
@@ -343,9 +349,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
         let store: Arc<dyn VectorStore> = tokio::task::spawn_blocking(move || {
             // nomic-embed-text produces 768-dimensional vectors.
             const EMBED_DIM: usize = 768;
-            let store = Arc::new(
-                QdrantStore::new(&qdrant_url_str).context("creating Qdrant client")?,
-            ) as Arc<dyn VectorStore>;
+            let store =
+                Arc::new(QdrantStore::new(&qdrant_url_str).context("creating Qdrant client")?)
+                    as Arc<dyn VectorStore>;
             store
                 .ensure_collection(COLLECTION_DOCUMENTS, EMBED_DIM)
                 .context("creating Qdrant documents collection")?;

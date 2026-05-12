@@ -26,7 +26,7 @@ pub struct SkillConfig {
     pub volume_step_pct: u8,
 
     // Music (Navidrome / Subsonic)
-    pub navidrome_url: Option<String>,  // e.g. "http://navidrome:4533"
+    pub navidrome_url: Option<String>, // e.g. "http://navidrome:4533"
     pub navidrome_user: Option<String>,
     pub navidrome_password: Option<String>,
 
@@ -185,8 +185,17 @@ impl Default for SkillRegistry {
         skills.insert("lights_off".into(), Arc::new(LightsOffSkill));
         skills.insert("weather".into(), Arc::new(WeatherSkill));
         let shell: Arc<dyn ShellExecutor> = Arc::new(RealShell);
-        skills.insert("volume_up".into(), Arc::new(VolumeSkill { up: true,  shell: shell.clone() }));
-        skills.insert("volume_down".into(), Arc::new(VolumeSkill { up: false, shell }));
+        skills.insert(
+            "volume_up".into(),
+            Arc::new(VolumeSkill {
+                up: true,
+                shell: shell.clone(),
+            }),
+        );
+        skills.insert(
+            "volume_down".into(),
+            Arc::new(VolumeSkill { up: false, shell }),
+        );
         skills.insert("respond".into(), Arc::new(RespondSkill));
         Self {
             skills,
@@ -202,18 +211,22 @@ struct PlayMusicSkill;
 impl Skill for PlayMusicSkill {
     async fn handle(&self, params: &serde_json::Value, ctx: &SkillContext<'_>) -> SkillResult {
         tracing::info!("skill: play_music");
-        let (url, user, pass) = match (
-            ctx.config.navidrome_url.as_deref(),
-            ctx.config.navidrome_user.as_deref(),
-            ctx.config.navidrome_password.as_deref(),
-        ) {
-            (Some(u), Some(user), Some(pass)) => (u.to_string(), user.to_string(), pass.to_string()),
-            _ => return SkillResult::speak(
-                "Music isn't set up yet — configure Navidrome credentials in Skills Settings.",
-            ),
-        };
+        let (url, user, pass) =
+            match (
+                ctx.config.navidrome_url.as_deref(),
+                ctx.config.navidrome_user.as_deref(),
+                ctx.config.navidrome_password.as_deref(),
+            ) {
+                (Some(u), Some(user), Some(pass)) => {
+                    (u.to_string(), user.to_string(), pass.to_string())
+                }
+                _ => return SkillResult::speak(
+                    "Music isn't set up yet — configure Navidrome credentials in Skills Settings.",
+                ),
+            };
 
-        let client = crate::navidrome::NavidromeClient::new(url, user, pass, ctx.http_client.clone());
+        let client =
+            crate::navidrome::NavidromeClient::new(url, user, pass, ctx.http_client.clone());
 
         let songs = if let Some(q) = params["query"].as_str().filter(|s| !s.is_empty()) {
             client.search_songs(q).await
@@ -309,7 +322,9 @@ impl Skill for TimerSkill {
         tokio::spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_secs(secs)).await;
             tracing::info!(node_id = %node_id, label = %label_spawn, "timer fired");
-            registry.enqueue_tts(&node_id, format!("Your {label_spawn} timer is up.")).await;
+            registry
+                .enqueue_tts(&node_id, format!("Your {label_spawn} timer is up."))
+                .await;
         });
 
         SkillResult::speak(format!("Timer set for {label}."))
@@ -326,11 +341,15 @@ impl Skill for TimerSkill {
 ///           3660 → "1 hour and 1 minute", 7200 → "2 hours".
 fn friendly_duration(total_secs: u64) -> String {
     let hours = total_secs / 3600;
-    let mins  = (total_secs % 3600) / 60;
-    let secs  = total_secs % 60;
+    let mins = (total_secs % 3600) / 60;
+    let secs = total_secs % 60;
 
     fn p(n: u64, unit: &str) -> String {
-        if n == 1 { format!("1 {unit}") } else { format!("{n} {unit}s") }
+        if n == 1 {
+            format!("1 {unit}")
+        } else {
+            format!("{n} {unit}s")
+        }
     }
 
     match (hours, mins, secs) {
@@ -362,15 +381,21 @@ impl Skill for LightsOffSkill {
     }
 }
 
-async fn call_ha_lights(on: bool, params: &serde_json::Value, ctx: &SkillContext<'_>) -> SkillResult {
+async fn call_ha_lights(
+    on: bool,
+    params: &serde_json::Value,
+    ctx: &SkillContext<'_>,
+) -> SkillResult {
     let (ha_url, token) = match (
         ctx.config.home_assistant_url.as_deref(),
         ctx.config.home_assistant_token.as_deref(),
     ) {
         (Some(u), Some(t)) => (u, t),
-        _ => return SkillResult::speak(
-            "Home Assistant isn't configured yet — set it up in Skills Settings.",
-        ),
+        _ => {
+            return SkillResult::speak(
+                "Home Assistant isn't configured yet — set it up in Skills Settings.",
+            )
+        }
     };
 
     // Determine which entity to target:
@@ -386,9 +411,11 @@ async fn call_ha_lights(on: bool, params: &serde_json::Value, ctx: &SkillContext
     } else {
         match &ctx.config.ha_entity_id {
             Some(e) => e.clone(),
-            None => return SkillResult::speak(
-                "Please configure a default light entity in Skills Settings.",
-            ),
+            None => {
+                return SkillResult::speak(
+                    "Please configure a default light entity in Skills Settings.",
+                )
+            }
         }
     };
 
@@ -410,7 +437,9 @@ async fn call_ha_lights(on: bool, params: &serde_json::Value, ctx: &SkillContext
         }
         Ok(r) => {
             tracing::warn!(status = %r.status(), entity = %entity_id, "HA returned error");
-            SkillResult::speak("Home Assistant returned an error — check the entity ID in Settings.")
+            SkillResult::speak(
+                "Home Assistant returned an error — check the entity ID in Settings.",
+            )
         }
         Err(e) => {
             tracing::error!(error = %e, "HA request failed");
@@ -548,7 +577,11 @@ impl Skill for VolumeSkill {
         };
 
         // amixer sset <control> <step>%± unmute
-        let output = match self.shell.run("amixer", &["sset", control, &delta, "unmute"]).await {
+        let output = match self
+            .shell
+            .run("amixer", &["sset", control, &delta, "unmute"])
+            .await
+        {
             Ok(o) => o,
             Err(e) => {
                 tracing::error!(error = %e, "amixer failed");
@@ -559,7 +592,7 @@ impl Skill for VolumeSkill {
         let word = if self.up { "up" } else { "down" };
         SkillResult::speak(match parse_volume_pct(&output) {
             Some(p) => format!("Volume {word}, now at {p}%."),
-            None    => format!("Volume {word}."),
+            None => format!("Volume {word}."),
         })
     }
 }
@@ -567,8 +600,8 @@ impl Skill for VolumeSkill {
 /// Extract the first `[N%]` from `amixer sset` / `amixer sget` output.
 fn parse_volume_pct(output: &str) -> Option<u8> {
     let start = output.find('[')? + 1;
-    let rest  = &output[start..];
-    let end   = rest.find('%')?;
+    let rest = &output[start..];
+    let end = rest.find('%')?;
     rest[..end].trim().parse::<u8>().ok()
 }
 
@@ -641,9 +674,15 @@ mod tests {
         let config = SkillConfig::default();
         let registry = crate::session::SessionRegistry::new();
         let ctx = make_ctx(&client, &config, &registry);
-        let result = reg.dispatch("set_timer", &json!({"duration_seconds": 120}), &ctx).await;
+        let result = reg
+            .dispatch("set_timer", &json!({"duration_seconds": 120}), &ctx)
+            .await;
         // 120 s → "2 minutes"
-        assert!(result.spoken_reply.contains("2 minutes"), "{}", result.spoken_reply);
+        assert!(
+            result.spoken_reply.contains("2 minutes"),
+            "{}",
+            result.spoken_reply
+        );
     }
 
     #[tokio::test]
@@ -655,7 +694,11 @@ mod tests {
         let ctx = make_ctx(&client, &config, &registry);
         let result = reg.dispatch("set_timer", &json!({}), &ctx).await;
         // 60 s → "1 minute"
-        assert!(result.spoken_reply.contains("1 minute"), "{}", result.spoken_reply);
+        assert!(
+            result.spoken_reply.contains("1 minute"),
+            "{}",
+            result.spoken_reply
+        );
     }
 
     #[tokio::test]
@@ -668,9 +711,17 @@ mod tests {
         let config = SkillConfig::default();
         let registry = crate::session::SessionRegistry::new();
         let ctx_up = make_ctx(&client, &config, &registry);
-        assert!(!reg.dispatch("volume_up", &json!({}), &ctx_up).await.spoken_reply.is_empty());
+        assert!(!reg
+            .dispatch("volume_up", &json!({}), &ctx_up)
+            .await
+            .spoken_reply
+            .is_empty());
         let ctx_down = make_ctx(&client, &config, &registry);
-        assert!(!reg.dispatch("volume_down", &json!({}), &ctx_down).await.spoken_reply.is_empty());
+        assert!(!reg
+            .dispatch("volume_down", &json!({}), &ctx_down)
+            .await
+            .spoken_reply
+            .is_empty());
     }
 
     #[tokio::test]
@@ -681,7 +732,11 @@ mod tests {
         let registry = crate::session::SessionRegistry::new();
         let ctx = make_ctx(&client, &config, &registry);
         let result = reg.dispatch("weather", &json!({}), &ctx).await;
-        assert!(result.spoken_reply.contains("location"), "should prompt for location: {}", result.spoken_reply);
+        assert!(
+            result.spoken_reply.contains("location"),
+            "should prompt for location: {}",
+            result.spoken_reply
+        );
     }
 
     // ── Weather HTTP tests ────────────────────────────────────────────────────
@@ -807,22 +862,22 @@ mod tests {
 
     #[test]
     fn friendly_duration_seconds_only() {
-        assert_eq!(friendly_duration(1),  "1 second");
+        assert_eq!(friendly_duration(1), "1 second");
         assert_eq!(friendly_duration(30), "30 seconds");
         assert_eq!(friendly_duration(59), "59 seconds");
     }
 
     #[test]
     fn friendly_duration_minutes_only() {
-        assert_eq!(friendly_duration(60),  "1 minute");
+        assert_eq!(friendly_duration(60), "1 minute");
         assert_eq!(friendly_duration(300), "5 minutes");
         assert_eq!(friendly_duration(3600 - 60), "59 minutes");
     }
 
     #[test]
     fn friendly_duration_minutes_and_seconds() {
-        assert_eq!(friendly_duration(61),  "1 minute and 1 second");
-        assert_eq!(friendly_duration(90),  "1 minute and 30 seconds");
+        assert_eq!(friendly_duration(61), "1 minute and 1 second");
+        assert_eq!(friendly_duration(90), "1 minute and 30 seconds");
         assert_eq!(friendly_duration(125), "2 minutes and 5 seconds");
     }
 
@@ -857,9 +912,15 @@ mod tests {
             registry: &reg,
             brain_ip: "127.0.0.1",
         };
-        let result = TimerSkill.handle(&json!({"duration_seconds": 0}), &ctx).await;
+        let result = TimerSkill
+            .handle(&json!({"duration_seconds": 0}), &ctx)
+            .await;
 
-        assert!(result.spoken_reply.contains("Timer set for"), "{}", result.spoken_reply);
+        assert!(
+            result.spoken_reply.contains("Timer set for"),
+            "{}",
+            result.spoken_reply
+        );
 
         // Give the spawned task a moment to run.
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -884,7 +945,9 @@ mod tests {
                 registry: &reg,
                 brain_ip: "127.0.0.1",
             };
-            TimerSkill.handle(&json!({"duration_seconds": 0}), &ctx).await;
+            TimerSkill
+                .handle(&json!({"duration_seconds": 0}), &ctx)
+                .await;
         }
 
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -922,14 +985,16 @@ mod tests {
     #[test]
     fn parse_volume_pct_extracts_percentage() {
         assert_eq!(parse_volume_pct(&amixer_output(66)), Some(66));
-        assert_eq!(parse_volume_pct(&amixer_output(0)),  Some(0));
+        assert_eq!(parse_volume_pct(&amixer_output(0)), Some(0));
         assert_eq!(parse_volume_pct(&amixer_output(100)), Some(100));
-        assert_eq!(parse_volume_pct("no brackets here"),  None);
+        assert_eq!(parse_volume_pct("no brackets here"), None);
     }
 
     #[tokio::test]
     async fn volume_up_includes_percentage_in_reply() {
-        let shell = Arc::new(MockShell { result: Ok(amixer_output(70)) });
+        let shell = Arc::new(MockShell {
+            result: Ok(amixer_output(70)),
+        });
         let skill = VolumeSkill { up: true, shell };
         let client = reqwest::Client::new();
         let config = SkillConfig::default();
@@ -937,13 +1002,23 @@ mod tests {
         let ctx = make_ctx(&client, &config, &registry);
 
         let result = skill.handle(&json!({}), &ctx).await;
-        assert!(result.spoken_reply.contains("up"), "{}", result.spoken_reply);
-        assert!(result.spoken_reply.contains("70%"), "{}", result.spoken_reply);
+        assert!(
+            result.spoken_reply.contains("up"),
+            "{}",
+            result.spoken_reply
+        );
+        assert!(
+            result.spoken_reply.contains("70%"),
+            "{}",
+            result.spoken_reply
+        );
     }
 
     #[tokio::test]
     async fn volume_down_includes_percentage_in_reply() {
-        let shell = Arc::new(MockShell { result: Ok(amixer_output(40)) });
+        let shell = Arc::new(MockShell {
+            result: Ok(amixer_output(40)),
+        });
         let skill = VolumeSkill { up: false, shell };
         let client = reqwest::Client::new();
         let config = SkillConfig::default();
@@ -951,13 +1026,23 @@ mod tests {
         let ctx = make_ctx(&client, &config, &registry);
 
         let result = skill.handle(&json!({}), &ctx).await;
-        assert!(result.spoken_reply.contains("down"), "{}", result.spoken_reply);
-        assert!(result.spoken_reply.contains("40%"), "{}", result.spoken_reply);
+        assert!(
+            result.spoken_reply.contains("down"),
+            "{}",
+            result.spoken_reply
+        );
+        assert!(
+            result.spoken_reply.contains("40%"),
+            "{}",
+            result.spoken_reply
+        );
     }
 
     #[tokio::test]
     async fn volume_skill_handles_amixer_failure() {
-        let shell = Arc::new(MockShell { result: Err("amixer: command not found") });
+        let shell = Arc::new(MockShell {
+            result: Err("amixer: command not found"),
+        });
         let skill = VolumeSkill { up: true, shell };
         let client = reqwest::Client::new();
         let config = SkillConfig::default();
@@ -976,7 +1061,9 @@ mod tests {
     async fn volume_skill_uses_config_control_and_step() {
         // Capture what args were passed to amixer.
         use std::sync::Mutex;
-        struct SpyShell { calls: Mutex<Vec<(String, Vec<String>)>> }
+        struct SpyShell {
+            calls: Mutex<Vec<(String, Vec<String>)>>,
+        }
         #[async_trait::async_trait]
         impl ShellExecutor for SpyShell {
             async fn run(&self, cmd: &str, args: &[&str]) -> anyhow::Result<String> {
@@ -988,8 +1075,13 @@ mod tests {
             }
         }
 
-        let shell = Arc::new(SpyShell { calls: Mutex::new(vec![]) });
-        let skill = VolumeSkill { up: true, shell: shell.clone() };
+        let shell = Arc::new(SpyShell {
+            calls: Mutex::new(vec![]),
+        });
+        let skill = VolumeSkill {
+            up: true,
+            shell: shell.clone(),
+        };
         let client = reqwest::Client::new();
         let config = SkillConfig {
             alsa_control: "PCM".into(),
@@ -1012,8 +1104,16 @@ mod tests {
         let config = SkillConfig::default();
         let registry = crate::session::SessionRegistry::new();
         for action in &[
-            "play_music", "pause_music", "stop_music", "set_timer",
-            "lights_on", "lights_off", "weather", "volume_up", "volume_down", "respond",
+            "play_music",
+            "pause_music",
+            "stop_music",
+            "set_timer",
+            "lights_on",
+            "lights_off",
+            "weather",
+            "volume_up",
+            "volume_down",
+            "respond",
         ] {
             let ctx = make_ctx(&client, &config, &registry);
             let result = reg.dispatch(action, &json!({}), &ctx).await;

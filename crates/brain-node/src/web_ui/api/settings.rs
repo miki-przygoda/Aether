@@ -156,7 +156,8 @@ pub async fn get_ollama_update(State(state): State<AppState>) -> Json<OllamaUpda
 }
 
 pub async fn check_ollama_update(State(state): State<AppState>) -> Json<OllamaUpdateInfo> {
-    let info = crate::ollama_updates::fetch_update_info(&state.ollama_url, &state.http_client).await;
+    let info =
+        crate::ollama_updates::fetch_update_info(&state.ollama_url, &state.http_client).await;
     *state.ollama_update.write().await = info.clone();
     Json(info)
 }
