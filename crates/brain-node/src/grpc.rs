@@ -20,7 +20,7 @@ pub mod proto {
 
 use proto::{
     aether_brain_server::AetherBrain, brain_response, AudioChunk, BrainResponse, PairRequest,
-    PairResponse, SkillAction, TranscriptUpdate, TtsChunk,
+    PairResponse, SkillAction, TranscriptUpdate, TtsChunk, WakeWordModelUpdate,
 };
 
 /// Configuration for RAG and conversation history.
@@ -87,21 +87,43 @@ impl AetherBrain for BrainService {
         let mut stream = request.into_inner();
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<BrainResponse, Status>>(32);
 
+        // Per-session push channel: allows deploy_wake_word to send model bytes
+        // to this node while it is mid-stream.
+        let (push_tx, mut push_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4);
+        registry.register_push(node_id.clone(), push_tx).await;
+
         tokio::spawn(async move {
             let mut pcm_buf: Vec<f32> = Vec::new();
             let mut expected_seq = 0u64;
 
-            while let Ok(Some(chunk)) = stream.message().await {
-                if chunk.seq != expected_seq {
-                    tracing::warn!(
-                        node_id = %nid,
-                        expected = expected_seq,
-                        got = chunk.seq,
-                        "out-of-order PCM chunk"
-                    );
+            loop {
+                tokio::select! {
+                    result = stream.message() => {
+                        match result {
+                            Ok(Some(chunk)) => {
+                                if chunk.seq != expected_seq {
+                                    tracing::warn!(
+                                        node_id = %nid,
+                                        expected = expected_seq,
+                                        got = chunk.seq,
+                                        "out-of-order PCM chunk"
+                                    );
+                                }
+                                expected_seq = chunk.seq.wrapping_add(1);
+                                pcm_buf.extend(bytes_to_f32le(&chunk.pcm));
+                            }
+                            _ => break,
+                        }
+                    }
+                    Some(model_bytes) = push_rx.recv() => {
+                        tracing::info!(node_id = %nid, bytes = model_bytes.len(), "sending wake word model update");
+                        let _ = tx.send(Ok(BrainResponse {
+                            payload: Some(brain_response::Payload::WakeWordModel(
+                                WakeWordModelUpdate { model_bytes }
+                            )),
+                        })).await;
+                    }
                 }
-                expected_seq = chunk.seq.wrapping_add(1);
-                pcm_buf.extend(bytes_to_f32le(&chunk.pcm));
             }
 
             if let Some(stt) = stt {
@@ -248,6 +270,7 @@ impl AetherBrain for BrainService {
                 }
             }
 
+            registry.unregister_push(&nid).await;
             registry.set_state(&nid, NodeState::Idle).await;
             registry.unregister(&nid).await;
             tracing::info!(node_id = %nid, "audio stream closed");

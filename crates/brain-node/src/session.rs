@@ -1,6 +1,6 @@
 use aether_core::{NodeId, NodeState, NodeStateEvent};
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, mpsc, RwLock};
 
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -13,6 +13,8 @@ pub struct SessionRegistry {
     inner: Arc<RwLock<HashMap<NodeId, Session>>>,
     /// Published on every state transition — subscribe for real-time state mirroring.
     pub event_tx: broadcast::Sender<NodeStateEvent>,
+    /// Per-session push channels for out-of-band model updates (wake word hot-reload).
+    push_txs: Arc<RwLock<HashMap<NodeId, mpsc::Sender<Vec<u8>>>>>,
 }
 
 impl SessionRegistry {
@@ -21,7 +23,37 @@ impl SessionRegistry {
         Self {
             inner: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
+            push_txs: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Register a push channel for `node_id`. Called by the gRPC handler after
+    /// a session opens; the sender is used to deliver wake word model updates.
+    pub async fn register_push(&self, node_id: NodeId, tx: mpsc::Sender<Vec<u8>>) {
+        self.push_txs.write().await.insert(node_id, tx);
+    }
+
+    /// Remove the push channel when a session ends.
+    pub async fn unregister_push(&self, node_id: &str) {
+        self.push_txs.write().await.remove(node_id);
+    }
+
+    /// Push raw model bytes to the specified nodes (or all nodes if `node_ids`
+    /// is empty). Returns the number of nodes that were actually online and
+    /// whose channel accepted the message.
+    pub async fn push_wake_word_model(&self, node_ids: &[String], model_bytes: Vec<u8>) -> usize {
+        let txs = self.push_txs.read().await;
+        let mut pushed = 0usize;
+        for (id, tx) in txs.iter() {
+            if node_ids.is_empty() || node_ids.contains(id) {
+                if tx.send(model_bytes.clone()).await.is_ok() {
+                    pushed += 1;
+                } else {
+                    tracing::warn!(node_id = %id, "model push channel closed — node may have disconnected");
+                }
+            }
+        }
+        pushed
     }
 
     /// Subscribe to state change events. Lagged receivers get

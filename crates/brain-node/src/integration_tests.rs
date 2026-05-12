@@ -24,6 +24,7 @@ async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
     let service = BrainService {
         registry: registry.clone(),
         certs_dir: std::path::PathBuf::from("/tmp"),
+        config_dir: std::path::PathBuf::from("/tmp"),
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
@@ -187,6 +188,7 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
     let service = BrainService {
         registry: registry.clone(),
         certs_dir: std::path::PathBuf::from("/tmp"),
+        config_dir: std::path::PathBuf::from("/tmp"),
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
@@ -314,6 +316,7 @@ async fn stt_transcription_sends_transcript_update() {
     let service = BrainService {
         registry: registry.clone(),
         certs_dir: std::path::PathBuf::from("/tmp"),
+        config_dir: std::path::PathBuf::from("/tmp"),
         stt: Some(stt),
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
@@ -391,6 +394,7 @@ async fn trie_match_sends_skill_action() {
     let service = BrainService {
         registry: registry.clone(),
         certs_dir: std::path::PathBuf::from("/tmp"),
+        config_dir: std::path::PathBuf::from("/tmp"),
         stt: Some(stt),
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
@@ -487,6 +491,7 @@ async fn llm_invoked_on_trie_no_match_sends_skill_action() {
     let service = BrainService {
         registry: registry.clone(),
         certs_dir: std::path::PathBuf::from("/tmp"),
+        config_dir: std::path::PathBuf::from("/tmp"),
         stt: Some(stt),
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: Some(llm),
@@ -591,6 +596,7 @@ async fn full_pipeline_pcm_to_tts_with_mocked_models() {
     let service = BrainService {
         registry: registry.clone(),
         certs_dir: std::path::PathBuf::from("/tmp"),
+        config_dir: std::path::PathBuf::from("/tmp"),
         stt: Some(stt),
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: Some(llm),
@@ -703,6 +709,7 @@ async fn tts_chunk_sent_after_skill_action() {
     let service = BrainService {
         registry: registry.clone(),
         certs_dir: std::path::PathBuf::from("/tmp"),
+        config_dir: std::path::PathBuf::from("/tmp"),
         stt: Some(stt),
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
