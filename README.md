@@ -77,11 +77,11 @@ A setup wizard will guide you through the remaining steps.
 
 ### 2. Install the Edge Node on Your Pi
 
-The deploy script cross-compiles `edge-node` for ARM on your development machine and copies the binary to the Pi over SSH. Before running it, set the two environment variables it needs:
+The deployment script cross-compiles `edge-node` for ARM on your development machine and copies the binary to the Pi over SSH. Before running it, set the two environment variables it needs:
 
-| Variable | Description | Example |
-|:---|:---|:---|
-| `AETHER_PI_HOST` | SSH target in `user@host` form | `pi@raspberrypi.local` |
+| Variable         | Description                     | Example                                 |
+|:-----------------|:--------------------------------|:----------------------------------------|
+| `AETHER_PI_HOST` | SSH target in `user@host` form  | `pi@raspberrypi.local`                  |
 | `AETHER_PI_ARCH` | Cross-compile target (optional) | `aarch64-unknown-linux-gnu` *(default)* |
 
 The easiest way is to create a `.env` file in the repo root so you never have to type them again:
