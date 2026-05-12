@@ -134,6 +134,7 @@ pub async fn stream_audio(
     channel: Channel,
     node_id: &str,
     mut pcm_rx: tokio::sync::mpsc::Receiver<Vec<f32>>,
+    model_reload_tx: tokio::sync::mpsc::Sender<()>,
 ) -> Result<()> {
     let mut client = AetherBrainClient::new(channel);
 
@@ -178,11 +179,14 @@ pub async fn stream_audio(
             Some(brain_response::Payload::WakeWordModel(update)) => {
                 tracing::info!(
                     bytes = update.model_bytes.len(),
-                    "wake word model update received — hot-reloading"
+                    "wake word model update received"
                 );
                 if let Ok(path) = std::env::var("AETHER_MODEL_PATH") {
                     match std::fs::write(&path, &update.model_bytes) {
-                        Ok(()) => tracing::info!(%path, "wake word model written"),
+                        Ok(()) => {
+                            tracing::info!(%path, "wake word model written — signalling hot-reload");
+                            let _ = model_reload_tx.send(()).await;
+                        }
                         Err(e) => tracing::warn!(%path, "failed to write model: {e}"),
                     }
                 } else {
