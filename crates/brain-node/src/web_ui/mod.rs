@@ -45,6 +45,8 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     /// Skill configuration (location, HA, Navidrome, etc.) — persisted to skills.json.
     pub skill_config: Arc<RwLock<SkillConfig>>,
+    /// LAN-accessible IP of the brain machine — used to construct Navidrome stream URLs.
+    pub brain_ip: String,
     /// Channel for pushing wake-word training progress to SSE subscribers.
     pub wake_progress_tx: Arc<tokio::sync::broadcast::Sender<ProgressEvent>>,
     /// Channel for pushing voice training progress to SSE subscribers.
@@ -68,6 +70,7 @@ impl AppState {
         documents_dir: Option<PathBuf>,
         ollama_url: String,
         finetuning_url: Option<String>,
+        brain_ip: String,
     ) -> Self {
         let (wake_tx, _) = tokio::sync::broadcast::channel(64);
         let (voice_tx, _) = tokio::sync::broadcast::channel(64);
@@ -104,6 +107,7 @@ impl AppState {
             wake_progress_tx: Arc::new(wake_tx),
             voice_progress_tx: Arc::new(voice_tx),
             ingest_progress_tx: Arc::new(ingest_tx),
+            brain_ip,
         }
     }
 }

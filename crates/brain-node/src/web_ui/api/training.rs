@@ -789,6 +789,7 @@ mod tests {
             wake_progress_tx: Arc::new(wake_tx),
             voice_progress_tx: Arc::new(voice_tx),
             ingest_progress_tx: Arc::new(ingest_tx),
+            brain_ip: "127.0.0.1".into(),
         }
     }
 

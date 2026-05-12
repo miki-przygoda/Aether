@@ -19,8 +19,8 @@ pub mod proto {
 }
 
 use proto::{
-    aether_brain_server::AetherBrain, brain_response, AudioChunk, BrainResponse, PairRequest,
-    PairResponse, SkillAction, TranscriptUpdate, TtsChunk, WakeWordModelUpdate,
+    aether_brain_server::AetherBrain, brain_response, AudioChunk, BrainResponse, MusicCommand,
+    PairRequest, PairResponse, SkillAction, TranscriptUpdate, TtsChunk, WakeWordModelUpdate,
 };
 
 /// Configuration for RAG and conversation history.
@@ -56,6 +56,8 @@ pub struct BrainService {
     pub http_client: reqwest::Client,
     /// Live skill configuration — shared with web UI settings page.
     pub skill_config: StdArc<RwLock<SkillConfig>>,
+    /// LAN-accessible IP of the brain machine, used for constructing Navidrome stream URLs.
+    pub brain_ip: String,
 }
 
 #[tonic::async_trait]
@@ -86,6 +88,7 @@ impl AetherBrain for BrainService {
         let rag = self.rag.clone();
         let http_client = self.http_client.clone();
         let skill_config = self.skill_config.clone();
+        let brain_ip = self.brain_ip.clone();
 
         registry.register(node_id.clone()).await;
         registry.set_state(&node_id, NodeState::Listening).await;
@@ -99,6 +102,13 @@ impl AetherBrain for BrainService {
         registry.register_push(node_id.clone(), push_tx).await;
 
         tokio::spawn(async move {
+            // Deliver any TTS messages that were queued by timers while this
+            // node was offline — spoken before the current wake-word interaction.
+            for text in registry.drain_pending_tts(&nid).await {
+                tracing::info!(node_id = %nid, msg = %text, "delivering queued timer callback");
+                synthesise_and_send(&tx, tts.clone(), &text, &nid, tts_settings.clone()).await;
+            }
+
             let mut pcm_buf: Vec<f32> = Vec::new();
             let mut expected_seq = 0u64;
 
@@ -172,6 +182,7 @@ impl AetherBrain for BrainService {
                                     http_client: &http_client,
                                     config: &cfg,
                                     registry: &registry,
+                                    brain_ip: &brain_ip,
                                 };
                                 let skill_result = skills.dispatch(&action_str, &params, &ctx).await;
                                 tracing::info!(node_id = %nid2, reply = %skill_result.spoken_reply, "skill dispatched");
@@ -185,6 +196,7 @@ impl AetherBrain for BrainService {
                                         )),
                                     }))
                                     .await;
+                                send_music_command(&tx, &skill_result).await;
                                 synthesise_and_send(&tx, tts.clone(), &skill_result.spoken_reply, &nid2, tts_settings.clone()).await;
                             }
                             _ => {
@@ -218,6 +230,7 @@ impl AetherBrain for BrainService {
                                                 http_client: &http_client,
                                                 config: &cfg,
                                                 registry: &registry,
+                                                brain_ip: &brain_ip,
                                             };
                                             let skill_result = skills.dispatch(&action_str, &params, &ctx).await;
                                             tracing::info!(node_id = %nid3_log, reply = %skill_result.spoken_reply, "skill dispatched");
@@ -231,6 +244,7 @@ impl AetherBrain for BrainService {
                                                     )),
                                                 }))
                                                 .await;
+                                            send_music_command(&tx, &skill_result).await;
                                             synthesise_and_send(&tx, tts.clone(), &skill_result.spoken_reply, &nid3_log, tts_settings.clone()).await;
                                         }
                                         Ok(Err(e)) => {
@@ -382,6 +396,28 @@ fn ask_with_rag(
     }
 
     Ok(resp)
+}
+
+// ─── Music command helper ─────────────────────────────────────────────────────
+
+/// If `skill_result` contains a `music_command`, send it to the Pi before TTS.
+async fn send_music_command(
+    tx: &tokio::sync::mpsc::Sender<Result<BrainResponse, Status>>,
+    skill_result: &aether_core::SkillResult,
+) {
+    if let Some(cmd) = &skill_result.music_command {
+        tracing::info!(action = %cmd.action, title = %cmd.title, "sending MusicCommand to Pi");
+        let _ = tx
+            .send(Ok(BrainResponse {
+                payload: Some(brain_response::Payload::MusicCommand(MusicCommand {
+                    action: cmd.action.clone(),
+                    stream_url: cmd.stream_url.clone(),
+                    title: cmd.title.clone(),
+                    artist: cmd.artist.clone(),
+                })),
+            }))
+            .await;
+    }
 }
 
 // ─── TTS helper ───────────────────────────────────────────────────────────────

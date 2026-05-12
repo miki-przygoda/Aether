@@ -30,6 +30,8 @@ services:
       HISTORY_TURNS: "10"
       DOCUMENTS_DIR: /documents
       FINETUNING_URL: http://finetuning:8000
+    devices:
+      - /dev/snd:/dev/snd   # ALSA — required for volume skill (amixer sset)
     depends_on:
       ollama:
         condition: service_healthy

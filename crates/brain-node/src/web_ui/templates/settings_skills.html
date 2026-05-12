@@ -44,6 +44,12 @@
     <input type="password" id="ha-token" placeholder="Paste token here"
            value="{{ home_assistant_token }}">
   </label>
+  <label class="field" style="margin-top:.75rem">
+    <span>Default light entity</span>
+    <input type="text" id="ha-entity" placeholder="light.living_room"
+           value="{{ ha_entity_id }}">
+    <small class="muted">Used for "lights on/off" without a room name.</small>
+  </label>
 </section>
 
 {# ── Volume ────────────────────────────────────────────────────────────────── #}
@@ -133,6 +139,8 @@ async function saveAll() {
     weather_api_base:       {{ weather_api_base | tojson }},
     home_assistant_url:     str(document.getElementById('ha-url').value),
     home_assistant_token:   str(document.getElementById('ha-token').value),
+    ha_entity_id:           str(document.getElementById('ha-entity').value),
+    ha_room_map:            {},
     alsa_control:           document.getElementById('alsa-control').value || 'Master',
     volume_step_pct:        parseInt(document.getElementById('volume-step').value, 10) || 10,
     navidrome_url:          str(document.getElementById('nav-url').value),

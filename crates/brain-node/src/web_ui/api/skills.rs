@@ -24,6 +24,7 @@ pub async fn test(
         http_client: &state.http_client,
         config: &cfg,
         registry: &state.registry,
+        brain_ip: &state.brain_ip,
     };
 
     match state.trie.classify(&body.query) {

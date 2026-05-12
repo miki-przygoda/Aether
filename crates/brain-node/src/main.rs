@@ -1,6 +1,7 @@
 mod grpc;
 mod history;
 mod ingest;
+mod navidrome;
 #[cfg(test)]
 mod integration_tests;
 mod llm;
@@ -395,6 +396,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         documents_dir,
         ollama_url_for_ui,
         finetuning_url,
+        local_ip.to_string(),
     );
 
     // Share the skill config between the gRPC service and the web UI.
@@ -414,6 +416,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         rag: rag_config,
         http_client,
         skill_config,
+        brain_ip: local_ip.to_string(),
     };
 
     let _mdns = match local_ip {
@@ -507,6 +510,7 @@ async fn run_pair_server(port: u16, certs_dir: PathBuf, config_dir: PathBuf) -> 
         rag: None,
         http_client: reqwest::Client::new(),
         skill_config: Arc::new(RwLock::new(web_ui::load_skill_config(&config_dir))),
+        brain_ip: local_ip.to_string(),
     };
 
     tracing::info!(%addr, "pairing server listening (plain gRPC)");

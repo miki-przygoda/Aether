@@ -15,6 +15,7 @@ pub async fn handler(State(state): State<AppState>) -> AppResult<Html<String>> {
             weather_api_base => cfg.weather_api_base,
             home_assistant_url => cfg.home_assistant_url.unwrap_or_default(),
             home_assistant_token => cfg.home_assistant_token.unwrap_or_default(),
+            ha_entity_id => cfg.ha_entity_id.unwrap_or_default(),
             alsa_control => cfg.alsa_control,
             volume_step_pct => cfg.volume_step_pct,
             navidrome_url => cfg.navidrome_url.unwrap_or_default(),

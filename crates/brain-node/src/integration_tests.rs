@@ -34,6 +34,7 @@ async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
         rag: None,
         http_client: reqwest::Client::new(),
         skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        brain_ip: "127.0.0.1".into(),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -101,6 +102,41 @@ impl TextToSpeech for MockTts {
     fn synthesise(&self, _text: &str, _settings: &TtsSettings) -> anyhow::Result<Vec<u8>> {
         encode_wav(&vec![0.0f32; 100], 24_000)
     }
+}
+
+/// Like `start_plain_server` but with MockTts enabled — needed to verify that
+/// pending TTS chunks are actually synthesised and sent.
+async fn start_server_with_tts() -> (std::net::SocketAddr, SessionRegistry) {
+    let registry = SessionRegistry::new();
+    let service = BrainService {
+        registry: registry.clone(),
+        certs_dir: std::path::PathBuf::from("/tmp"),
+        config_dir: std::path::PathBuf::from("/tmp"),
+        stt: None,
+        trie: Arc::new(aether_core::CommandTrie::default()),
+        llm: None,
+        tts: Some(Arc::new(MockTts)),
+        tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
+        skills: Arc::new(SkillRegistry::default()),
+        rag: None,
+        http_client: reqwest::Client::new(),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::skills::SkillConfig::default(),
+        )),
+        brain_ip: "127.0.0.1".into(),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(
+        Server::builder()
+            .add_service(AetherBrainServer::new(service))
+            .serve_with_incoming(TcpListenerStream::new(listener)),
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    (addr, registry)
 }
 
 // ─── tests ────────────────────────────────────────────────────────────────────
@@ -200,6 +236,7 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
         rag: None,
         http_client: reqwest::Client::new(),
         skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        brain_ip: "127.0.0.1".into(),
     };
 
     let server_tls = ServerTlsConfig::new()
@@ -330,6 +367,7 @@ async fn stt_transcription_sends_transcript_update() {
         rag: None,
         http_client: reqwest::Client::new(),
         skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        brain_ip: "127.0.0.1".into(),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -410,6 +448,7 @@ async fn trie_match_sends_skill_action() {
         rag: None,
         http_client: reqwest::Client::new(),
         skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        brain_ip: "127.0.0.1".into(),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -509,6 +548,7 @@ async fn llm_invoked_on_trie_no_match_sends_skill_action() {
         rag: None,
         http_client: reqwest::Client::new(),
         skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        brain_ip: "127.0.0.1".into(),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -616,6 +656,7 @@ async fn full_pipeline_pcm_to_tts_with_mocked_models() {
         rag: None,
         http_client: reqwest::Client::new(),
         skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        brain_ip: "127.0.0.1".into(),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -731,6 +772,7 @@ async fn tts_chunk_sent_after_skill_action() {
         rag: None,
         http_client: reqwest::Client::new(),
         skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
+        brain_ip: "127.0.0.1".into(),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -805,5 +847,50 @@ async fn tts_chunk_sent_after_skill_action() {
             assert_eq!(&chunk.wav[0..4], b"RIFF", "should be valid WAV");
         }
         other => panic!("expected TtsAudio, got: {other:?}"),
+    }
+}
+
+/// A timer callback queued via `enqueue_tts` before the stream opens must be
+/// synthesised and delivered as the very first response on the next stream.
+#[tokio::test]
+async fn pending_tts_delivered_at_stream_start() {
+    let (addr, registry) = start_server_with_tts().await;
+
+    // Simulate a timer that fired while the Pi was quiet.
+    registry
+        .enqueue_tts("timer-pi", "Your 5 minute timer is up.".into())
+        .await;
+
+    let ep = format!("http://{addr}");
+    let channel = tonic::transport::Channel::from_shared(ep)
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+    let mut client = AetherBrainClient::new(channel);
+
+    // Open a stream and immediately close the audio sender — no PCM needed.
+    let (tx, rx) = tokio::sync::mpsc::channel::<AudioChunk>(1);
+    let stream = ReceiverStream::new(rx);
+    let mut req = tonic::Request::new(stream);
+    req.metadata_mut()
+        .insert("x-node-id", "timer-pi".parse().unwrap());
+
+    let mut resp_stream = client.audio_stream(req).await.unwrap().into_inner();
+    drop(tx);
+
+    // The very first message must be the queued TTS callback.
+    let first = tokio::time::timeout(Duration::from_secs(5), resp_stream.message())
+        .await
+        .expect("timed out waiting for pending TTS chunk")
+        .expect("stream error")
+        .expect("stream closed before TTS chunk");
+
+    use crate::grpc::proto::brain_response;
+    match first.payload {
+        Some(brain_response::Payload::TtsAudio(chunk)) => {
+            assert_eq!(&chunk.wav[0..4], b"RIFF", "pending TTS should be valid WAV");
+        }
+        other => panic!("expected TtsAudio for pending callback, got: {other:?}"),
     }
 }
