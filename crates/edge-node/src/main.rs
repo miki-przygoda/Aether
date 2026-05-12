@@ -185,8 +185,7 @@ async fn run(model_path: PathBuf, config_dir: PathBuf, state_port: u16) -> Resul
 
     // Shared slot for the current music playback task — allows pause/stop
     // commands to abort mid-track playback from any subsequent wake-word session.
-    let music_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>> =
-        Arc::new(Mutex::new(None));
+    let music_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
 
     publish_state(&state_tx, NodeState::Idle);
     tracing::info!("listening for wake word…");

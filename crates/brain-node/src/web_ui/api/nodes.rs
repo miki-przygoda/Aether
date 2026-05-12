@@ -1,4 +1,6 @@
-use crate::web_ui::{json_error, load_paired_nodes, register_paired_node, remove_paired_node, AppState};
+use crate::web_ui::{
+    json_error, load_paired_nodes, register_paired_node, remove_paired_node, AppState,
+};
 use axum::{
     extract::{Path, State},
     http::StatusCode,

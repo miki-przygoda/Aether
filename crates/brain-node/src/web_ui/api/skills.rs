@@ -42,7 +42,10 @@ pub async fn test(
         }
         _ => {
             let Some(llm) = state.llm.clone() else {
-                return Err((StatusCode::BAD_GATEWAY, json_error("LLM not configured".to_string())));
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    json_error("LLM not configured".to_string()),
+                ));
             };
             let query = body.query.clone();
             let resp = tokio::task::spawn_blocking(move || llm.ask(&query))
@@ -51,7 +54,9 @@ pub async fn test(
                 .map_err(|e| (StatusCode::BAD_GATEWAY, json_error(e.to_string())))?;
 
             let action = resp.action.unwrap_or_else(|| "respond".to_string());
-            let mut params = resp.params.unwrap_or(serde_json::Value::Object(Default::default()));
+            let mut params = resp
+                .params
+                .unwrap_or(serde_json::Value::Object(Default::default()));
             params["response"] = serde_json::Value::String(resp.response);
             let result = state.skills.dispatch(&action, &params, &ctx).await;
             Ok(Json(serde_json::json!({

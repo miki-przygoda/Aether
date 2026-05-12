@@ -71,7 +71,9 @@ impl NavidromeClient {
             .context("Navidrome: parsing getRandomSongs response")?;
 
         check_subsonic_status(&resp)?;
-        Ok(extract_songs(&resp["subsonic-response"]["randomSongs"]["song"]))
+        Ok(extract_songs(
+            &resp["subsonic-response"]["randomSongs"]["song"],
+        ))
     }
 
     /// Search for songs matching `query` via `search3`.
@@ -95,7 +97,9 @@ impl NavidromeClient {
             .context("Navidrome: parsing search3 response")?;
 
         check_subsonic_status(&resp)?;
-        Ok(extract_songs(&resp["subsonic-response"]["searchResult3"]["song"]))
+        Ok(extract_songs(
+            &resp["subsonic-response"]["searchResult3"]["song"],
+        ))
     }
 
     /// Build an MP3 stream URL accessible from outside Docker (Pi on LAN).
@@ -152,7 +156,9 @@ mod tests {
         let [(_u, _user), (_t, token), (_s, salt), ..] = c.auth();
         // token must be 32-char lowercase hex
         assert_eq!(token.len(), 32, "MD5 token should be 32 hex chars");
-        assert!(token.chars().all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()));
+        assert!(token
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()));
         // salt must be 8-char hex
         assert_eq!(salt.len(), 8);
     }
@@ -161,10 +167,12 @@ mod tests {
     fn auth_salts_differ_between_calls() {
         let c = client();
         // Run a few times — UUID-based salt is random so collisions are astronomically unlikely
-        let salts: Vec<String> = (0..5).map(|_| {
-            let [_, _, (_, s), ..] = c.auth();
-            s
-        }).collect();
+        let salts: Vec<String> = (0..5)
+            .map(|_| {
+                let [_, _, (_, s), ..] = c.auth();
+                s
+            })
+            .collect();
         let unique: std::collections::HashSet<_> = salts.iter().collect();
         assert!(unique.len() > 1, "salts should differ across calls");
     }
@@ -175,7 +183,10 @@ mod tests {
         let url = c.stream_url("song-42", "http://192.168.1.5:4533");
         assert!(url.contains("id=song-42"), "URL should contain song ID");
         assert!(url.contains("format=mp3"), "URL should request MP3");
-        assert!(url.starts_with("http://192.168.1.5:4533"), "should use external base");
+        assert!(
+            url.starts_with("http://192.168.1.5:4533"),
+            "should use external base"
+        );
     }
 
     #[test]

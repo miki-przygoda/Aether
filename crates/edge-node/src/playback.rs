@@ -24,8 +24,7 @@ pub async fn stream_http_audio(url: String) -> Result<()> {
         let cursor = std::io::Cursor::new(bytes.to_vec());
         let (_stream, handle) =
             rodio::OutputStream::try_default().map_err(|e| anyhow::anyhow!("audio output: {e}"))?;
-        let sink =
-            rodio::Sink::try_new(&handle).map_err(|e| anyhow::anyhow!("audio sink: {e}"))?;
+        let sink = rodio::Sink::try_new(&handle).map_err(|e| anyhow::anyhow!("audio sink: {e}"))?;
         let decoder =
             rodio::Decoder::new(cursor).map_err(|e| anyhow::anyhow!("MP3 decode: {e}"))?;
         sink.append(decoder);

@@ -1,5 +1,8 @@
 use aether_core::{NodeId, NodeState, NodeStateEvent};
-use std::{collections::{HashMap, VecDeque}, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 #[derive(Debug, Clone)]
