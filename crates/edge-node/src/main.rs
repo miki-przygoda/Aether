@@ -13,6 +13,7 @@ use aether_core::NodeState;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 
 #[derive(Parser)]
@@ -182,6 +183,11 @@ async fn run(model_path: PathBuf, config_dir: PathBuf, state_port: u16) -> Resul
     // received and written to disk — main loop rebuilds the detector on next idle.
     let (model_reload_tx, mut model_reload_rx) = mpsc::channel::<()>(4);
 
+    // Shared slot for the current music playback task — allows pause/stop
+    // commands to abort mid-track playback from any subsequent wake-word session.
+    let music_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>> =
+        Arc::new(Mutex::new(None));
+
     publish_state(&state_tx, NodeState::Idle);
     tracing::info!("listening for wake word…");
 
@@ -210,8 +216,9 @@ async fn run(model_path: PathBuf, config_dir: PathBuf, state_port: u16) -> Resul
         let node_id = cfg.node_id.clone();
         let ch = channel.clone();
         let reload_tx = model_reload_tx.clone();
+        let music_handle_clone = music_handle.clone();
         let mut stream_task = tokio::spawn(async move {
-            brain_conn::stream_audio(ch, &node_id, pcm_rx, reload_tx).await
+            brain_conn::stream_audio(ch, &node_id, pcm_rx, reload_tx, music_handle_clone).await
         });
 
         let mut kill_rx = kill_tx.subscribe();

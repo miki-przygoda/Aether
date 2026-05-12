@@ -7,6 +7,35 @@ use std::sync::{
     Arc, Mutex,
 };
 
+/// Download an MP3 stream from `url` and play it through the default audio device.
+///
+/// Buffers the full response before decoding — suitable for typical track sizes
+/// (a 5-minute MP3 at 128 kbps is ≈ 5 MB, well within Pi 4 memory limits).
+/// Returns when playback completes, is interrupted, or an error occurs.
+pub async fn stream_http_audio(url: String) -> Result<()> {
+    let bytes = reqwest::get(&url)
+        .await
+        .context("connecting to Navidrome")?
+        .bytes()
+        .await
+        .context("downloading audio stream")?;
+
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let cursor = std::io::Cursor::new(bytes.to_vec());
+        let (_stream, handle) =
+            rodio::OutputStream::try_default().map_err(|e| anyhow::anyhow!("audio output: {e}"))?;
+        let sink =
+            rodio::Sink::try_new(&handle).map_err(|e| anyhow::anyhow!("audio sink: {e}"))?;
+        let decoder =
+            rodio::Decoder::new(cursor).map_err(|e| anyhow::anyhow!("MP3 decode: {e}"))?;
+        sink.append(decoder);
+        sink.sleep_until_end();
+        Ok(())
+    })
+    .await
+    .context("playback task panicked")?
+}
+
 /// Play WAV bytes through the default audio output device.
 ///
 /// Blocks until all samples have been sent to the hardware buffer.
