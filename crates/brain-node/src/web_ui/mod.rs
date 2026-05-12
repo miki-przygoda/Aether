@@ -5,6 +5,7 @@ mod templates;
 
 use crate::grpc::RagConfig;
 use crate::llm::LlmClient;
+use crate::ollama_updates::OllamaUpdateInfo;
 use crate::session::SessionRegistry;
 use crate::skills::{SkillConfig, SkillRegistry};
 use crate::tts::TextToSpeech;
@@ -53,6 +54,8 @@ pub struct AppState {
     pub voice_progress_tx: Arc<tokio::sync::broadcast::Sender<ProgressEvent>>,
     /// Channel for pushing document ingestion progress to SSE subscribers.
     pub ingest_progress_tx: Arc<tokio::sync::broadcast::Sender<ProgressEvent>>,
+    /// Cached result of the last Ollama version check (updated by background task).
+    pub ollama_update: Arc<RwLock<OllamaUpdateInfo>>,
 }
 
 impl AppState {
@@ -108,6 +111,7 @@ impl AppState {
             voice_progress_tx: Arc::new(voice_tx),
             ingest_progress_tx: Arc::new(ingest_tx),
             brain_ip,
+            ollama_update: Arc::new(RwLock::new(OllamaUpdateInfo::default())),
         }
     }
 }
@@ -518,6 +522,11 @@ pub fn make_router(state: AppState) -> Router {
         .route(
             "/api/settings/models/:name",
             axum::routing::delete(api::settings::remove_model),
+        )
+        .route(
+            "/api/ollama/update-check",
+            get(api::settings::get_ollama_update)
+                .post(api::settings::check_ollama_update),
         )
         // API — wake word training
         .route(

@@ -7,6 +7,7 @@ pub async fn handler(State(state): State<AppState>) -> AppResult<Html<String>> {
     let paired = load_paired_nodes(&state.config_dir);
     let wizard = load_wizard_state(&state.config_dir);
     let setup_complete = wizard.stage == WizardStage::Complete;
+    let update = state.ollama_update.read().await.clone();
 
     let mut nodes: Vec<serde_json::Value> = paired
         .into_iter()
@@ -33,6 +34,12 @@ pub async fn handler(State(state): State<AppState>) -> AppResult<Html<String>> {
     render(
         &state,
         "dashboard.html",
-        context! { active => "dashboard", nodes => nodes, setup_complete => setup_complete },
+        context! {
+            active => "dashboard",
+            nodes => nodes,
+            setup_complete => setup_complete,
+            ollama_update_available => update.update_available,
+            ollama_latest => update.latest_version.unwrap_or_default(),
+        },
     )
 }

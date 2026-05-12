@@ -1,3 +1,4 @@
+use crate::ollama_updates::OllamaUpdateInfo;
 use crate::web_ui::{json_error, AppState, ModelSettings};
 use aether_core::TtsSettings;
 use axum::{
@@ -146,4 +147,16 @@ pub async fn remove_model(
     .map_err(|e| (StatusCode::BAD_GATEWAY, json_error(e.to_string())))?;
 
     Ok(Json(serde_json::json!({ "status": "deleted" })))
+}
+
+// ── Ollama update checker ─────────────────────────────────────────────────────
+
+pub async fn get_ollama_update(State(state): State<AppState>) -> Json<OllamaUpdateInfo> {
+    Json(state.ollama_update.read().await.clone())
+}
+
+pub async fn check_ollama_update(State(state): State<AppState>) -> Json<OllamaUpdateInfo> {
+    let info = crate::ollama_updates::fetch_update_info(&state.ollama_url, &state.http_client).await;
+    *state.ollama_update.write().await = info.clone();
+    Json(info)
 }

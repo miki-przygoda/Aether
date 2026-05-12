@@ -18,6 +18,7 @@ pub async fn tts_handler(State(state): State<AppState>) -> AppResult<Html<String
 
 pub async fn models_handler(State(state): State<AppState>) -> AppResult<Html<String>> {
     let settings = state.model_settings.read().await.clone();
+    let update = state.ollama_update.read().await.clone();
     let ollama_models = fetch_ollama_models(&state.ollama_url);
     render(
         &state,
@@ -26,6 +27,7 @@ pub async fn models_handler(State(state): State<AppState>) -> AppResult<Html<Str
             active => "settings_models",
             settings => serde_json::to_value(&settings).unwrap_or_default(),
             ollama_models => ollama_models,
+            ollama_update => serde_json::to_value(&update).unwrap_or_default(),
         },
     )
 }

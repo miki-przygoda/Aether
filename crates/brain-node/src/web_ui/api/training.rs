@@ -790,6 +790,7 @@ mod tests {
             voice_progress_tx: Arc::new(voice_tx),
             ingest_progress_tx: Arc::new(ingest_tx),
             brain_ip: "127.0.0.1".into(),
+            ollama_update: Arc::new(RwLock::new(crate::ollama_updates::OllamaUpdateInfo::default())),
         }
     }
 

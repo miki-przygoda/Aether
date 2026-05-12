@@ -6,6 +6,7 @@ mod navidrome;
 mod integration_tests;
 mod llm;
 mod mdns_adv;
+mod ollama_updates;
 mod pair;
 mod session;
 mod skills;
@@ -401,6 +402,22 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     // Share the skill config between the gRPC service and the web UI.
     let skill_config = web_state.skill_config.clone();
+
+    // Monthly Ollama update check — runs in the background; first check after 30 s
+    // to give Ollama time to start, then repeats every 30 days.
+    {
+        let update_slot = web_state.ollama_update.clone();
+        let http = web_state.http_client.clone();
+        let url = web_state.ollama_url.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            loop {
+                let info = ollama_updates::fetch_update_info(&url, &http).await;
+                *update_slot.write().await = info;
+                tokio::time::sleep(std::time::Duration::from_secs(30 * 24 * 3600)).await;
+            }
+        });
+    }
 
     let addr: SocketAddr = ([0, 0, 0, 0], port).into();
     let service = BrainService {

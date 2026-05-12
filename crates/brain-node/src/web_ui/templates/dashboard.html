@@ -13,6 +13,16 @@
 </div>
 {% endif %}
 
+{% if ollama_update_available %}
+<div class="alert" style="background:var(--bg2);border:1px solid var(--accent);margin-bottom:1.75rem;display:flex;align-items:center;justify-content:space-between;gap:1rem">
+  <div style="display:flex;align-items:center;gap:.6rem">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+    <span>Ollama update available — <strong>{{ ollama_latest }}</strong></span>
+  </div>
+  <a href="/ui/settings/models#ollama-version" class="btn btn-sm btn-secondary" style="flex-shrink:0">View instructions →</a>
+</div>
+{% endif %}
+
 <div class="cards">
   {% for node in nodes %}
   <div class="card node-card state-{{ node.state | lower }}{% if not node.online %} node-offline{% endif %}" id="node-{{ node.node_id }}">

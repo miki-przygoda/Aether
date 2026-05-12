@@ -57,6 +57,41 @@
 </div>
 {% endif %}
 
+{# ── Ollama version ────────────────────────────────────────────────────────── #}
+<div class="card" id="ollama-version" style="max-width:560px;margin-top:1.5rem">
+  <h2>Ollama Version</h2>
+  <div id="update-status">
+    {% if ollama_update.current_version %}
+    <p>Installed: <strong>{{ ollama_update.current_version }}</strong></p>
+    {% if ollama_update.update_available %}
+    <p>Latest: <strong>{{ ollama_update.latest_version }}</strong>
+      <span class="badge" style="background:#b45309;color:#fef9c3;margin-left:.25rem">Update available</span>
+    </p>
+    <div class="alert" style="background:var(--bg2);border:1px solid var(--border);margin:1rem 0">
+      <strong>To update Ollama:</strong>
+      <pre style="margin:.5rem 0 0;font-size:.78rem;white-space:pre-wrap">docker compose pull ollama
+docker compose up -d ollama</pre>
+    </div>
+    {% else %}
+    <p>Latest: <strong>{{ ollama_update.latest_version }}</strong>
+      <span class="badge" style="background:var(--green);color:#fff;margin-left:.25rem">Up to date</span>
+    </p>
+    {% endif %}
+    {% elif ollama_update.error %}
+    <p class="muted">Check failed: {{ ollama_update.error }}</p>
+    {% else %}
+    <p class="muted">Not checked yet — starts automatically 30 s after brain boot.</p>
+    {% endif %}
+    {% if ollama_update.last_checked_at %}
+    <p class="muted" style="font-size:.78rem;margin-top:.5rem">Last checked: {{ ollama_update.last_checked_at }}</p>
+    {% endif %}
+  </div>
+  <div style="margin-top:.75rem;display:flex;align-items:center;gap:.75rem">
+    <button class="btn btn-secondary" onclick="checkForUpdates()">Check for updates</button>
+    <span id="check-msg" style="display:none;color:var(--muted)">Checking…</span>
+  </div>
+</div>
+
 <script>
 document.getElementById('model-form').addEventListener('submit', async function(e) {
   e.preventDefault();
@@ -92,6 +127,15 @@ async function removeModel(name) {
   const resp = await fetch('/api/settings/models/' + encodeURIComponent(name), { method: 'DELETE' });
   if (resp.ok) location.reload();
   else alert('Remove failed');
+}
+
+async function checkForUpdates() {
+  const msg = document.getElementById('check-msg');
+  msg.style.display = 'inline';
+  const resp = await fetch('/api/ollama/update-check', { method: 'POST' });
+  msg.style.display = 'none';
+  if (resp.ok) location.reload();
+  else alert('Update check failed — check brain logs.');
 }
 </script>
 {% endblock %}
