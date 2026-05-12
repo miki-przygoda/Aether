@@ -6,7 +6,7 @@ mod templates;
 use crate::grpc::RagConfig;
 use crate::llm::LlmClient;
 use crate::session::SessionRegistry;
-use crate::skills::SkillRegistry;
+use crate::skills::{SkillConfig, SkillRegistry};
 use crate::tts::TextToSpeech;
 use aether_core::{CommandTrie, TtsSettings};
 use axum::{
@@ -41,6 +41,10 @@ pub struct AppState {
     pub voice_training: Arc<Mutex<VoiceTrainingState>>,
     pub model_settings: Arc<RwLock<ModelSettings>>,
     pub finetuning_url: Option<String>,
+    /// Shared HTTP client — one connection pool for all outbound requests (weather, HA, etc.).
+    pub http_client: reqwest::Client,
+    /// Skill configuration (location, HA, Navidrome, etc.) — persisted to skills.json.
+    pub skill_config: Arc<RwLock<SkillConfig>>,
     /// Channel for pushing wake-word training progress to SSE subscribers.
     pub wake_progress_tx: Arc<tokio::sync::broadcast::Sender<ProgressEvent>>,
     /// Channel for pushing voice training progress to SSE subscribers.
@@ -73,6 +77,8 @@ impl AppState {
 
         let existing_wake_samples = load_wake_samples_from_disk(&config_dir);
 
+        let skill_config = load_skill_config(&config_dir);
+
         Self {
             env: Arc::new(templates::build()),
             registry,
@@ -93,10 +99,27 @@ impl AppState {
             voice_training: Arc::new(Mutex::new(VoiceTrainingState::default())),
             model_settings: Arc::new(RwLock::new(model_settings)),
             finetuning_url,
+            http_client: reqwest::Client::new(),
+            skill_config: Arc::new(RwLock::new(skill_config)),
             wake_progress_tx: Arc::new(wake_tx),
             voice_progress_tx: Arc::new(voice_tx),
             ingest_progress_tx: Arc::new(ingest_tx),
         }
+    }
+}
+
+pub fn load_skill_config(config_dir: &std::path::Path) -> SkillConfig {
+    let path = config_dir.join("skills.json");
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_skill_config(config_dir: &std::path::Path, config: &SkillConfig) {
+    let path = config_dir.join("skills.json");
+    if let Ok(json) = serde_json::to_string_pretty(config) {
+        let _ = std::fs::write(path, json);
     }
 }
 
@@ -414,6 +437,7 @@ pub fn make_router(state: AppState) -> Router {
         .route("/ui/skills", get(pages::skills::handler))
         .route("/ui/settings/tts", get(pages::settings::tts_handler))
         .route("/ui/settings/models", get(pages::settings::models_handler))
+        .route("/ui/settings/skills", get(pages::skills_settings::handler))
         .route(
             "/ui/training/wake-word",
             get(pages::training::wake_word_handler),
@@ -462,6 +486,14 @@ pub fn make_router(state: AppState) -> Router {
         // API — skills
         .route("/api/skills", get(api::skills::list))
         .route("/api/skills/test", axum::routing::post(api::skills::test))
+        .route(
+            "/api/settings/skills",
+            get(api::skills_settings::get).post(api::skills_settings::save),
+        )
+        .route(
+            "/api/skills/location-search",
+            get(api::skills_settings::location_search),
+        )
         // API — settings
         .route(
             "/api/settings/tts",
