@@ -1,185 +1,187 @@
 # Aether
 
-**Local-First, Privacy-Centric Smart Assistant — built in Rust.**
+**Local-first, privacy-centric smart assistant — built in Rust.**
 
-Aether is an open-source distributed smart speaker system that keeps all AI processing on your own hardware. No cloud APIs. No telemetry. No data leaving your network.
-
----
-
-## Why Aether?
-
-Commercial smart speakers trade convenience for privacy. Aether takes a different approach: split the work between low-power edge nodes (always-on listening) and a Dockerised brain node (heavy AI inference), connected over an encrypted local network. The result is Alexa-like responsiveness with full data sovereignty — and no accounts, subscriptions, or external services required.
-
----
-
-## Architecture
-
-```
-  Edge Node 1 ──┐
-  (ARM SBC)     │                     ┌──────────────────────────────────────┐
-                ├── mTLS gRPC ──────► │   Brain Node (Docker Compose)        │
-  Edge Node 2 ──┤   (local network)   │                                      │
-  (ARM SBC)     │                     │  ┌──────────┐  ┌─────────┐           │
-                │   WAV stream ◄───── │  │brain-node│  │ ollama  │           │
-  Edge Node N ──┘                     │  │  Rust    │  │  LLM    │           │
-                                      │  │  + Web   │  └─────────┘           │
-  Browser ───── HTTP :8080 ─────────► │  │  UI      │  ┌─────────┐           │
-  (local LAN)                         │  └──────────┘  │ qdrant  │           │
-                                      │                │  RAG    │           │
-                                      │                └─────────┘           │
-                                      └──────────────────────────────────────┘
-```
-
-Edge nodes discover the brain automatically on the local network via mDNS — no accounts, no manual configuration. All inter-node traffic is encrypted with mutual TLS using a self-hosted certificate authority established during a one-time pairing ceremony.
-
-The web UI is served directly from the brain node binary on port 8080 — no separate service, full access to all brain internals.
-
----
-
-## Repository Layout
-
-```
-Aether/
-├── crates/
-│   ├── aether-core/   — shared types and traits (LlmResponse, NodeState, …)
-│   ├── brain-node/    — Docker-deployed inference server (STT · LLM · TTS · Web UI)
-│   └── edge-node/     — ARM SBC binary (wake word · audio capture · gRPC client)
-├── finetuning/        — Python service for Whisper voice personalisation (on-demand only)
-├── proto/             — gRPC service definition (aether.proto)
-├── scripts/           — model download, wake word training, edge deploy helpers
-└── todos/             — phase epics and task tracking
-```
-
----
-
-## Tech Stack
-
-| Layer                 | Technology                                        |
-|:----------------------|:--------------------------------------------------|
-| **Language**          | Rust (edition 2021, async via Tokio)              |
-| **Audio I/O**         | `cpal` (ALSA / CoreAudio)                         |
-| **Wake Word**         | `rustpotter` — pure Rust, trainable on your voice |
-| **Discovery**         | `mdns-sd` (zero-config local network)             |
-| **Networking**        | `tonic` (gRPC) over mTLS                          |
-| **TLS**               | `rustls` + `rcgen` (self-hosted CA)               |
-| **STT**               | Whisper.cpp via `whisper-rs`                      |
-| **LLM**               | Ollama (Llama 3.2 3B)                             |
-| **TTS**               | Kokoro-82M via `ort` (ONNX Runtime)               |
-| **Memory / RAG**      | Qdrant (local vector DB, Docker Compose service)  |
-| **Embeddings**        | `nomic-embed-text` via Ollama                     |
-| **Web UI**            | Axum + MiniJinja (server-rendered, SSE)           |
-| **GPIO / Hardware**   | `rppal` (I2C, PWM, GPIO)                          |
-| **Brain Deployment**  | Docker Compose (CPU default, GPU opt-in)          |
-| **Cross-compilation** | `cross-rs`                                        |
+Aether is an open-source smart speaker system that keeps every piece of AI processing on your own hardware. No cloud APIs, no telemetry, no accounts, no data leaving your network. Wake word detection, speech-to-text, language model inference, and text-to-speech all run locally — on devices you own and control.
 
 ---
 
 ## How It Works
 
-1. **Idle** — Edge node listens locally for the wake word using a small on-device rustpotter model. No audio leaves the device.
-2. **Activation** — Wake word detected; a mTLS gRPC stream opens to the brain node (discovered automatically via mDNS).
-3. **Transcription** — Audio chunks are streamed to Whisper for speech-to-text. A confidence-based fallback automatically escalates to a larger model when needed.
-4. **Routing** — The transcript is first matched against a zero-latency command trie. On a match, the skill is dispatched directly — no LLM call. On no match, the transcript goes to Ollama.
-5. **Inference** — Ollama retrieves relevant document context from Qdrant (RAG) and recent conversation history before calling the LLM. The model responds with structured JSON describing an action or reply.
-6. **Synthesis** — Response text is converted to speech via Kokoro TTS and streamed back.
-7. **Playback & Action** — Edge node plays the audio and executes any GPIO actions (LED state, etc.).
+Aether splits the workload between two roles:
+
+- **Edge node** — a low-power ARM board (e.g. Raspberry Pi) that sits in the room. It listens for the wake word locally and streams audio to the brain only after activation. Nothing leaves the device until you speak.
+- **Brain node** — a more powerful machine running Docker that handles the heavy lifting: Whisper for transcription, Ollama for the language model, and Kokoro for speech synthesis.
+
+Edge nodes discover the brain automatically over your local network via mDNS. All traffic between them is encrypted with mutual TLS using a self-hosted certificate authority created during a one-time pairing ceremony.
+
+```
+  Edge Node ────────────────────────────────────────────────────────────┐
+  (ARM SBC)                                                             │
+                                                                        │
+    Microphone → wake word detection (on-device, always private)        │
+                                                                        │
+    Wake word detected → mTLS gRPC stream ───────────────────────────►  │
+                                                                        │  Brain Node
+                         WAV response ◄──────────────────────────────►  │  (Docker Compose)
+                                                                        │
+    Speaker ← playback                                                  │   Whisper  ·  Ollama  ·  Kokoro
+                                                                        │   Qdrant (RAG + history)
+  Browser ──── http://<brain>:8080/ui/ ──────────────────────────────►  │   Web UI
+```
+
+The brain serves a self-hosted web UI at port 8080 — use it from any browser on your local network to pair nodes, train your wake word, manage documents, and configure every setting.
 
 ---
 
 ## Getting Started
 
-### Brain Node (any machine with Docker)
+### What You Need
+
+- A machine to run the brain (any x86-64 or ARM64 machine with Docker and at least 8 GB RAM)
+- A Raspberry Pi or similar ARM single-board computer for the edge node
+- A USB microphone and speaker for the edge node
+
+---
+
+### 1. Launch the Brain
+
+Clone the repository and download the AI model weights, then start the brain with Docker Compose.
 
 ```bash
-# Download Whisper and Kokoro model weights
+git clone https://github.com/your-org/aether
+cd Aether
+
+# Download Whisper and Kokoro model weights (~2 GB)
 ./scripts/download-models.sh
 
-# Start the full stack (CPU)
+# Start the full brain stack
 docker compose up
+```
 
-# GPU-accelerated (requires nvidia-container-toolkit)
+If your machine has an NVIDIA GPU and the `nvidia-container-toolkit` installed, enable GPU acceleration:
+
+```bash
 docker compose -f compose.yml -f compose.gpu.yml up
 ```
 
-Once running, the **web configuration UI** is available at:
+Once running, open the web UI in a browser on the same network:
 
 ```
-http://<brain-host>:8080/ui/
+http://<brain-machine-ip>:8080/ui/
 ```
 
-Use it to pair edge nodes, train your wake word, configure TTS, manage documents, and test skills — all from any browser on the local network.
+A setup wizard will guide you through the remaining steps.
 
-### Edge Node (ARM SBC)
+---
+
+### 2. Install the Edge Node on Your Pi
+
+On your development machine, cross-compile the edge-node binary for ARM and deploy it to the Pi in one step:
 
 ```bash
-# Cross-compile for the target (from dev machine)
 ./scripts/deploy-edge.sh
-
-# First boot on the Pi — discovers brain via mDNS and pairs
-edge-node pair --brain-addr <brain-ip>:50052 --node-id my-pi
 ```
 
-No config files, no IP addresses stored manually, no accounts.
+This compiles `edge-node` with `cross-rs`, copies the binary to your Pi over SSH, and installs it as a systemd service. See the script header for the environment variables it reads (`EDGE_HOST`, `EDGE_USER`, `EDGE_PATH`).
+
+---
+
+### 3. Pair the Pi with the Brain
+
+Run the pairing command on the Pi. You will need a wired (Ethernet) connection to the brain for this step — the pairing port is not exposed over Wi-Fi by default.
+
+```bash
+edge-node pair \
+  --brain-addr <brain-ip>:50052 \
+  --node-id living-room-pi
+```
+
+The brain will prompt you to approve the pairing request in the terminal. Accept it. The Pi receives a signed client certificate and stores its configuration in `~/.config/aether/`. After this point, the Pi connects to the brain automatically over mTLS — no IP addresses or credentials need to be set manually again.
+
+---
+
+### 4. Train Your Wake Word
+
+In the web UI, go to **Wake Word Training**. Record at least five short samples of yourself saying the wake phrase. The trainer automatically trims silence, generates phoneme-anchored reference samples via TTS, and builds a rustpotter model. Hit **Deploy** — the model is pushed to all connected edge nodes over the existing encrypted connection without a restart.
+
+---
+
+### 5. Start Listening
+
+On the Pi, start the edge node:
+
+```bash
+edge-node run \
+  --model-path ~/.config/aether/hey-aether.rpw
+```
+
+The Pi will begin listening for the wake word immediately. Speak the phrase, ask a question, and Aether will respond through the speaker.
+
+To run the edge node as a service so it starts automatically on boot, use the systemd unit file installed by `deploy-edge.sh`.
 
 ---
 
 ## Features
 
-- **100% local inference** — Whisper, Ollama, and TTS all run on your own hardware.
-- **Wake word privacy** — Detection runs entirely on the edge node; nothing is streamed until you speak the wake word.
-- **Trainable wake word** — Record samples in-browser and train a custom `rustpotter` model from the web UI. Deploys to all edge nodes over the existing mTLS connection — no restart required.
-- **Voice personalisation** — Fine-tune Whisper on your voice via the web UI. Supports multiple per-household user profiles.
-- **Document-grounded memory** — Drop `.txt` or `.md` files into `./documents/`; Qdrant indexes them for RAG. Answers are grounded in your documents, not hallucinated.
-- **Persistent conversation history** — Per-node conversation context stored in Qdrant and injected into every request. Persists across brain restarts.
-- **Zero-config discovery** — Edge nodes find the brain via mDNS automatically on the local network.
-- **Self-hosted encryption** — mTLS with a local CA. One pairing ceremony per node; no external services.
-- **Multi-node** — Connect as many edge nodes as you want; each has a fully isolated session and conversation history.
-- **Web configuration UI** — Manage everything from a browser: nodes, TTS settings, model settings, skill tester, document ingestion.
-- **Hardware feedback** — LED status indicators reflect assistant state (idle, processing, error).
-- **Physical panic button** — Hardware interrupt to immediately kill all active audio.
-- **CPU or GPU** — Brain runs on CPU by default; GPU acceleration is a one-flag compose override.
+**AI and voice**
+- Trainable wake word — record samples in-browser and deploy a custom model to all nodes over the encrypted connection, with no restart required.
+- On-device wake word detection — no audio leaves the edge node until activation.
+- Whisper speech-to-text with automatic quality-tier fallback based on confidence score.
+- Ollama-powered language model (Llama 3.2 by default; any Ollama-compatible model works).
+- Kokoro TTS — natural-sounding speech synthesis running entirely on your hardware.
+- Document-grounded memory — drop `.txt` or `.md` files into `./documents/`; they are embedded and indexed into Qdrant so answers are grounded in your own content.
+- Persistent conversation history per node, stored in Qdrant and injected into every request.
+
+**Hardware and reliability**
+- LED status indicators mirror assistant state (idle, listening, processing, error) in real time.
+- Physical panic button — hardware interrupt that immediately kills any active audio stream.
+- Auxiliary node mode — additional boards can mirror a primary node's LED state without running a microphone or wake word detector.
+- Multi-node — connect as many edge nodes as you want; each has a fully independent session and conversation history.
+- CPU by default, GPU-accelerated with a single compose flag.
+
+**Configuration and management**
+- Self-hosted web UI served directly from the brain node — no separate service, no external dependencies.
+- Real-time dashboard via server-sent events — node state updates without a page refresh.
+- Model management — pull, configure, or remove Ollama models from the browser.
+- Skill tester — send arbitrary queries against the skill router and inspect routing decisions from the web UI.
 
 ---
 
-## Web UI
+## Privacy
 
-The brain node serves a self-hosted configuration interface at `http://<brain-host>:8080/ui/`.
+Aether's privacy guarantees are enforced at the software level, not as a policy.
 
-| Page                      | Description                                                                             |
-|:--------------------------|:----------------------------------------------------------------------------------------|
-| **Dashboard**             | Live node status via SSE — connection state updates in real time without a page refresh |
-| **Nodes**                 | Manage paired edge nodes; run the pairing wizard to add new ones                        |
-| **Wake Word Training**    | Record samples in-browser, train a custom model, deploy to nodes (hot-reload)           |
-| **Voice Personalisation** | Record prompts per user and fine-tune Whisper on your voice                             |
-| **TTS Settings**          | Adjust voice, speed, and pitch; play a preview in-browser                               |
-| **Model Settings**        | Configure Whisper mode, LLM routing, pull/remove Ollama models                          |
-| **Skills**                | Browse registered skills and test any query against the skill router                    |
-| **Documents**             | Upload documents and trigger Qdrant ingestion with live progress                        |
+| What could leak                     | What Aether does                                                                                                                                                             |
+|:------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Always-on microphone audio          | Wake word detection runs entirely on the edge node. Audio is only streamed after activation — the brain never receives idle microphone data.                                 |
+| Voice data sent to vendors          | All STT (Whisper), LLM (Ollama), and TTS (Kokoro) run on your own hardware. No external API calls are made.                                                                  |
+| Traffic intercepted on your network | All edge-to-brain traffic is encrypted with mutual TLS. Both sides authenticate with certificates issued by a local CA you control.                                          |
+| Metadata and telemetry              | There is no telemetry. No analytics, no crash reporting, no usage data is collected or transmitted anywhere.                                                                 |
+| External account requirements       | There are no accounts. Discovery uses mDNS. Encryption uses a self-hosted certificate authority. Nothing requires an internet connection after model weights are downloaded. |
 
----
-
-## Roadmap
-
-All five phases are shipped. The system is fully functional end-to-end.
-
-| Phase                                 | Description                                                                               | Status    |
-|:--------------------------------------|:------------------------------------------------------------------------------------------|:----------|
-| **1 — Audio Pipe & Secure Transport** | `cpal` capture, rustpotter wake word, mDNS discovery, mTLS pairing, gRPC streaming        | ✅ Shipped |
-| **2 — Neural Engine**                 | Docker Compose brain stack, Whisper STT, Ollama LLM, Kokoro TTS, skill router             | ✅ Shipped |
-| **3 — Hardware Feedback**             | GPIO LEDs, panic button, auxiliary node state mirroring                                   | ✅ Shipped |
-| **4 — Memory & RAG**                  | Qdrant vector DB, document ingestion, RAG-grounded answers, conversation history          | ✅ Shipped |
-| **5 — Web Configuration UI**          | Self-hosted Axum UI, wake word training wizard, voice personalisation, TTS/model settings | ✅ Shipped |
+The web configuration UI is served on HTTP on your local network and is not intended to be exposed to the internet. For deployments where the brain machine is reachable from outside the network, put the UI behind a reverse proxy with authentication.
 
 ---
 
-## Privacy & Security
+## Tech Stack
 
-- **No external APIs.** STT, LLM, and TTS run entirely on your own hardware.
-- **No telemetry.** Nothing is sent to any vendor.
-- **No accounts.** Discovery is via mDNS; encryption via a self-hosted certificate authority.
-- **Encrypted transport.** All inter-node traffic is mutual TLS — both sides authenticate with certificates you issued.
-- **Hardware mute.** Physical microphone kill switch wired directly to the edge node.
-- **Local web UI.** The configuration interface is HTTP on the local network only — not exposed to the internet.
+| Layer             | Technology                                      |
+|:------------------|:------------------------------------------------|
+| Language          | Rust 2021, async via Tokio                      |
+| Wake word         | `rustpotter` — pure Rust, trained on your voice |
+| STT               | Whisper.cpp via `whisper-rs`                    |
+| LLM               | Ollama (Llama 3.2 3B default)                   |
+| TTS               | Kokoro-82M via ONNX Runtime                     |
+| Audio I/O         | `cpal` (ALSA on Linux, CoreAudio on macOS)      |
+| Networking        | `tonic` gRPC over mTLS (`rustls` + `rcgen`)     |
+| Discovery         | `mdns-sd`                                       |
+| Vector DB         | Qdrant                                          |
+| Embeddings        | `nomic-embed-text` via Ollama                   |
+| Web UI            | Axum + MiniJinja, server-sent events            |
+| GPIO              | `rppal`                                         |
+| Brain deployment  | Docker Compose                                  |
+| Cross-compilation | `cross-rs`                                      |
 
 ---
 
