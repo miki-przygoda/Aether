@@ -380,6 +380,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let registry = SessionRegistry::new();
     let trie = Arc::new(aether_core::CommandTrie::default());
     let skills = Arc::new(SkillRegistry::default());
+    let http_client = reqwest::Client::new();
 
     let web_state = web_ui::AppState::new(
         registry.clone(),
@@ -396,6 +397,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
         finetuning_url,
     );
 
+    // Share the skill config between the gRPC service and the web UI.
+    let skill_config = web_state.skill_config.clone();
+
     let addr: SocketAddr = ([0, 0, 0, 0], port).into();
     let service = BrainService {
         registry,
@@ -408,6 +412,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
         tts_settings,
         skills,
         rag: rag_config,
+        http_client,
+        skill_config,
     };
 
     let _mdns = match local_ip {
@@ -491,7 +497,7 @@ async fn run_pair_server(port: u16, certs_dir: PathBuf, config_dir: PathBuf) -> 
     let service = BrainService {
         registry: SessionRegistry::new(),
         certs_dir,
-        config_dir,
+        config_dir: config_dir.clone(),
         stt: None,
         trie: Arc::new(aether_core::CommandTrie::default()),
         llm: None,
@@ -499,6 +505,8 @@ async fn run_pair_server(port: u16, certs_dir: PathBuf, config_dir: PathBuf) -> 
         tts_settings: Arc::new(RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
+        http_client: reqwest::Client::new(),
+        skill_config: Arc::new(RwLock::new(web_ui::load_skill_config(&config_dir))),
     };
 
     tracing::info!(%addr, "pairing server listening (plain gRPC)");

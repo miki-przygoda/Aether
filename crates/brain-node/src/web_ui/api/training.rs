@@ -784,6 +784,8 @@ mod tests {
             voice_training: Arc::new(Mutex::new(VoiceTrainingState::default())),
             model_settings: Arc::new(RwLock::new(ModelSettings::default())),
             finetuning_url,
+            http_client: reqwest::Client::new(),
+            skill_config: Arc::new(RwLock::new(crate::skills::SkillConfig::default())),
             wake_progress_tx: Arc::new(wake_tx),
             voice_progress_tx: Arc::new(voice_tx),
             ingest_progress_tx: Arc::new(ingest_tx),

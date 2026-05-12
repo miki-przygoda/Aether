@@ -2,7 +2,7 @@ use crate::history::{self, Role};
 use crate::ingest;
 use crate::llm::LlmClient;
 use crate::session::SessionRegistry;
-use crate::skills::SkillRegistry;
+use crate::skills::{SkillConfig, SkillContext, SkillRegistry};
 use crate::stt::{bytes_to_f32le, SpeechToText};
 use crate::tts::TextToSpeech;
 use crate::vector_store::{VectorStore, COLLECTION_DOCUMENTS};
@@ -52,6 +52,10 @@ pub struct BrainService {
     pub tts_settings: StdArc<RwLock<TtsSettings>>,
     pub skills: Arc<SkillRegistry>,
     pub rag: Option<RagConfig>,
+    /// Shared HTTP client for skill I/O (weather, Home Assistant, etc.).
+    pub http_client: reqwest::Client,
+    /// Live skill configuration — shared with web UI settings page.
+    pub skill_config: StdArc<RwLock<SkillConfig>>,
 }
 
 #[tonic::async_trait]
@@ -80,6 +84,8 @@ impl AetherBrain for BrainService {
         let tts_settings: StdArc<RwLock<TtsSettings>> = self.tts_settings.clone();
         let skills = self.skills.clone();
         let rag = self.rag.clone();
+        let http_client = self.http_client.clone();
+        let skill_config = self.skill_config.clone();
 
         registry.register(node_id.clone()).await;
         registry.set_state(&node_id, NodeState::Listening).await;
@@ -150,24 +156,7 @@ impl AetherBrain for BrainService {
                             }))
                             .await;
 
-                        // Shared helper: send SkillAction then optionally synthesise TTS.
-                        let dispatch = {
-                            let tx = tx.clone();
-                            let tts = tts.clone();
-                            let skills = skills.clone();
-                            let nid2 = nid2.clone();
-                            move |action_str: String,
-                                  params: serde_json::Value,
-                                  params_json: String| {
-                                let skill_result = skills.dispatch(&action_str, &params);
-                                tracing::info!(
-                                    node_id = %nid2,
-                                    reply = %skill_result.spoken_reply,
-                                    "skill dispatched"
-                                );
-                                (tx, tts, skill_result.spoken_reply, action_str, params_json)
-                            }
-                        };
+                        let cfg = skill_config.read().await.clone();
 
                         match trie.classify(&t.text) {
                             ClassifyResult::Match(action) => {
@@ -178,26 +167,25 @@ impl AetherBrain for BrainService {
                                     "trie matched — dispatching directly"
                                 );
                                 let params = serde_json::Value::Object(Default::default());
-                                let (tx, tts, spoken_reply, action_str, params_json) =
-                                    dispatch(action_str, params, "{}".to_string());
+                                let ctx = SkillContext {
+                                    node_id: &nid2,
+                                    http_client: &http_client,
+                                    config: &cfg,
+                                    registry: &registry,
+                                };
+                                let skill_result = skills.dispatch(&action_str, &params, &ctx).await;
+                                tracing::info!(node_id = %nid2, reply = %skill_result.spoken_reply, "skill dispatched");
                                 let _ = tx
                                     .send(Ok(BrainResponse {
                                         payload: Some(brain_response::Payload::Action(
                                             SkillAction {
                                                 action: action_str,
-                                                params_json,
+                                                params_json: "{}".to_string(),
                                             },
                                         )),
                                     }))
                                     .await;
-                                synthesise_and_send(
-                                    &tx,
-                                    tts.clone(),
-                                    &spoken_reply,
-                                    &nid2,
-                                    tts_settings.clone(),
-                                )
-                                .await;
+                                synthesise_and_send(&tx, tts.clone(), &skill_result.spoken_reply, &nid2, tts_settings.clone()).await;
                             }
                             _ => {
                                 if let Some(llm) = llm {
@@ -225,8 +213,14 @@ impl AetherBrain for BrainService {
                                             params["response"] =
                                                 serde_json::Value::String(resp.response);
                                             let params_json = params.to_string();
-                                            let (tx, tts, spoken_reply, action_str, params_json) =
-                                                dispatch(action_str, params, params_json);
+                                            let ctx = SkillContext {
+                                                node_id: &nid3_log,
+                                                http_client: &http_client,
+                                                config: &cfg,
+                                                registry: &registry,
+                                            };
+                                            let skill_result = skills.dispatch(&action_str, &params, &ctx).await;
+                                            tracing::info!(node_id = %nid3_log, reply = %skill_result.spoken_reply, "skill dispatched");
                                             let _ = tx
                                                 .send(Ok(BrainResponse {
                                                     payload: Some(brain_response::Payload::Action(
@@ -237,14 +231,7 @@ impl AetherBrain for BrainService {
                                                     )),
                                                 }))
                                                 .await;
-                                            synthesise_and_send(
-                                                &tx,
-                                                tts.clone(),
-                                                &spoken_reply,
-                                                &nid3_log,
-                                                tts_settings.clone(),
-                                            )
-                                            .await;
+                                            synthesise_and_send(&tx, tts.clone(), &skill_result.spoken_reply, &nid3_log, tts_settings.clone()).await;
                                         }
                                         Ok(Err(e)) => {
                                             tracing::error!(node_id = %nid3_log, "LLM error: {e}")

@@ -1,5 +1,5 @@
 use aether_core::{NodeId, NodeState, NodeStateEvent};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{HashMap, VecDeque}, sync::Arc};
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 #[derive(Debug, Clone)]
@@ -15,6 +15,9 @@ pub struct SessionRegistry {
     pub event_tx: broadcast::Sender<NodeStateEvent>,
     /// Per-session push channels for out-of-band model updates (wake word hot-reload).
     push_txs: Arc<RwLock<HashMap<NodeId, mpsc::Sender<Vec<u8>>>>>,
+    /// Pending TTS messages queued for nodes that are not currently mid-stream.
+    /// Drained at the start of each new audio stream so the Pi says them aloud.
+    pending_tts: Arc<RwLock<HashMap<NodeId, VecDeque<String>>>>,
 }
 
 impl SessionRegistry {
@@ -24,7 +27,28 @@ impl SessionRegistry {
             inner: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             push_txs: Arc::new(RwLock::new(HashMap::new())),
+            pending_tts: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Queue a TTS message for a node. Delivered on its next wake-word trigger.
+    pub async fn enqueue_tts(&self, node_id: &str, text: String) {
+        self.pending_tts
+            .write()
+            .await
+            .entry(node_id.to_string())
+            .or_default()
+            .push_back(text);
+    }
+
+    /// Drain and return all pending TTS messages for a node (clears the queue).
+    pub async fn drain_pending_tts(&self, node_id: &str) -> Vec<String> {
+        self.pending_tts
+            .write()
+            .await
+            .remove(node_id)
+            .map(|q| q.into_iter().collect())
+            .unwrap_or_default()
     }
 
     /// Register a push channel for `node_id`. Called by the gRPC handler after

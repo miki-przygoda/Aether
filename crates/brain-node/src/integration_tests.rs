@@ -32,6 +32,8 @@ async fn start_plain_server() -> (std::net::SocketAddr, SessionRegistry) {
         tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
+        http_client: reqwest::Client::new(),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -196,6 +198,8 @@ async fn mtls_audio_stream_handshake_and_pcm_delivery() {
         tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
+        http_client: reqwest::Client::new(),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
     };
 
     let server_tls = ServerTlsConfig::new()
@@ -324,6 +328,8 @@ async fn stt_transcription_sends_transcript_update() {
         tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
+        http_client: reqwest::Client::new(),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -402,6 +408,8 @@ async fn trie_match_sends_skill_action() {
         tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
+        http_client: reqwest::Client::new(),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -499,6 +507,8 @@ async fn llm_invoked_on_trie_no_match_sends_skill_action() {
         tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
+        http_client: reqwest::Client::new(),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -604,6 +614,8 @@ async fn full_pipeline_pcm_to_tts_with_mocked_models() {
         tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
+        http_client: reqwest::Client::new(),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -717,6 +729,8 @@ async fn tts_chunk_sent_after_skill_action() {
         tts_settings: std::sync::Arc::new(tokio::sync::RwLock::new(TtsSettings::default())),
         skills: Arc::new(SkillRegistry::default()),
         rag: None,
+        http_client: reqwest::Client::new(),
+        skill_config: std::sync::Arc::new(tokio::sync::RwLock::new(crate::skills::SkillConfig::default())),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
