@@ -27,7 +27,19 @@ message BrainResponse {
     TtsChunk            tts_audio       = 2; // synthesised speech chunk       (Phase 2+)
     SkillAction         action          = 3; // structured skill dispatch      (Phase 2+)
     WakeWordModelUpdate wake_word_model = 4; // hot-reload wake word model     (Phase 5+)
+    MusicCommand        music_command   = 5; // music playback control         (Phase 6+)
   }
+}
+
+// Tells the edge node to start/stop/pause music playback.
+// For "play", stream_url is a direct HTTP URL to the Navidrome /rest/stream
+// endpoint (MP3), accessible from the Pi's LAN.  For "pause" and "stop",
+// stream_url is empty.
+message MusicCommand {
+  string action     = 1; // "play", "pause", "stop"
+  string stream_url = 2;
+  string title      = 3;
+  string artist     = 4;
 }
 
 // Pushed by the brain when a new wake word model is deployed.
